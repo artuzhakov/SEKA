@@ -1,0 +1,91 @@
+# Laravel
+/node_modules
+/public/hot
+/public/storage
+/storage/*.key
+/vendor
+.env
+.env.backup
+.env.production
+.phpunit.result.cache
+Homestead.json
+Homestead.yaml
+npm-debug.log
+yarn-error.log
+/.fleet
+/.idea
+/.vscua
+
+# Vue/NPM
+/public/build
+/resources/js/dist
+
+# Storage
+/storage/app/public/*
+!/storage/app/public/.gitkeep
+
+# Logs
+*.log
+storage/logs/*.log
+laravel.log
+
+# Cache
+bootstrap/cache/*
+
+# Testing
+/coverage
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Local env files
+.env.local
+.env.*.local
+
+# Build assets
+/public/css
+/public/js
+/public/mix-manifest.json
+
+# Laravel Sail
+/.env.example
+/.gitattributes
+/docker-compose.override.yml
+
+# Composer
+/composer.phar
+
+# Optional: если используете Laravel Sail
+/sail
+
+# Database (не коммитьте дампы базы)
+*.sql
+*.sqlite
+/database/database.sqlite
+
+# Backup files
+*.backup
+*.bak
+
+# OS generated files
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+[Tt]humbs.db
+
+echo "*.zip" >> .gitignore
+echo "*.tar" >> .gitignore  
+echo "*.gz" >> .gitignore
+echo "*.7z" >> .gitignore
+
+echo "/storage/app/public/*" >> .gitignore
+echo "!/storage/app/public/.gitkeep" >> .gitignore

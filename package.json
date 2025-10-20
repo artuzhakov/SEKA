@@ -1,0 +1,29 @@
+{
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "build": "vite build",
+        "test:vue": "vitest",
+        "test:vue:ui": "vitest --ui"
+    },
+    "devDependencies": {
+        "@inertiajs/vue3": "^1.0.0",
+        "@tailwindcss/forms": "^0.5.3",
+        "@vitejs/plugin-vue": "^5.0.0",
+        "autoprefixer": "^10.4.12",
+        "axios": "^1.6.4",
+        "laravel-echo": "^1.19.0",
+        "laravel-vite-plugin": "^1.0.0",
+        "postcss": "^8.4.31",
+        "pusher-js": "^8.4.0",
+        "tailwindcss": "^3.2.1",
+        "vite": "^5.0.0",
+        "vue": "^3.4.0"
+    },
+    "dependencies": {
+        "@formkit/auto-animate": "^0.8.2",
+        "flowbite": "^2.3.0",
+        "vue-timer-hook": "^1.0.84"
+    }
+}
