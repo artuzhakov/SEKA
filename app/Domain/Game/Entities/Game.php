@@ -144,7 +144,17 @@ class Game
     public function getStatus(): GameStatus { return $this->status; }
     public function getMode(): GameMode { return $this->mode; }
     public function getPlayers(): array { return $this->players; }
-    public function getBank(): int { return $this->bank; }
+    /**
+     * 🎯 Получить общий банк игры
+     */
+    public function getBank(): int
+    {
+        $bank = 0;
+        foreach ($this->players as $player) {
+            $bank += $player->getCurrentBet();
+        }
+        return $bank;
+    }
     public function getCurrentPlayerPosition(): ?int { return $this->currentPlayerPosition; }
     
     /**

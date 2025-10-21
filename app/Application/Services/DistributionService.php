@@ -9,27 +9,61 @@ use App\Domain\Game\Entities\Player;
 use App\Domain\Game\Entities\Card;
 use App\Domain\Game\Enums\CardSuit;
 use App\Domain\Game\Enums\CardRank;
+use App\Domain\Game\Enums\GameStatus;
 
 class DistributionService
 {
+    
     /**
-     * 🎯 Раздать карты всем игрокам (упрощенная колода)
+     * 🎯 Раздать карты всем игрокам
      */
-    public function distributeCards(Game $game): void
+    public function distributeCards(Game $game): array
     {
+        \Log::info("🎴 Starting card distribution for game: " . $game->getId()->toInt());
+        
         $players = $game->getActivePlayers();
         $deck = $this->createSimplifiedDeck();
         
+        \Log::info("🎴 Created deck with " . count($deck) . " cards");
+        
         // 🎯 Раздаем по 3 карты каждому игроку
+        $playerCards = [];
         foreach ($players as $player) {
-            $playerCards = [];
+            $playerHand = [];
             for ($i = 0; $i < 3; $i++) {
                 if (!empty($deck)) {
-                    $playerCards[] = array_shift($deck);
+                    $card = array_shift($deck);
+                    $playerHand[] = $this->cardToArray($card);
                 }
             }
-            $player->receiveCards($playerCards);
+            $playerCards[$player->getUserId()] = $playerHand;
+            
+            // 🎯 Сохраняем карты в объект игрока
+            if (method_exists($player, 'receiveCards')) {
+                $player->receiveCards($playerHand);
+            }
+            
+            \Log::info("🎴 Player {$player->getUserId()} received " . count($playerHand) . " cards");
         }
+        
+        // 🎯 Выбрать случайного дилера
+        $dealerPosition = $this->selectRandomDealer($game);
+        $game->setCurrentPlayerPosition($dealerPosition);
+        
+        // 🎯 Обновить статус игры на BIDDING
+        $this->updateGameStatus($game, GameStatus::BIDDING);
+        
+        // 🎯 Сохраняем игру после раздачи
+        $this->saveGame($game);
+        
+        \Log::info("🎴 Distribution complete. Dealer: {$dealerPosition}, Status: " . $game->getStatus()->value);
+        
+        return [
+            'player_cards' => $playerCards,
+            'community_cards' => [],
+            'round' => 'preflop',
+            'dealer_position' => $dealerPosition
+        ];
     }
 
     /**
@@ -65,12 +99,57 @@ class DistributionService
         }
         
         // 🎯 1 джокер (6 крестей)
-        $deck[] = new Card(CardSuit::CLUBS, CardRank::SIX); // Джокер
+        $deck[] = new Card(CardSuit::CLUBS, CardRank::SIX);
         
         // 🎯 Перемешиваем колоду
         shuffle($deck);
         
         return $deck;
+    }
+
+    /**
+     * 🎯 Преобразовать Card в массив для фронтенда
+     */
+    private function cardToArray(Card $card): array
+    {
+        // 🎯 Адаптируем под методы существующего Card класса
+        return [
+            'suit' => $card->getSuit()->value ?? $card->getSuit(),
+            'rank' => $card->getRank()->value ?? $card->getRank(),
+            'is_face_up' => false, // 🎯 Карты раздаются рубашкой вверх
+            'is_joker' => $card->isJoker() ?? ($card->getRank() === CardRank::SIX && $card->getSuit() === CardSuit::CLUBS),
+        ];
+    }
+
+    /**
+     * 🎯 Выбрать случайного дилера
+     */
+    private function selectRandomDealer(Game $game): int
+    {
+        $players = $game->getPlayers();
+        $randomPlayer = $players[array_rand($players)];
+        return $randomPlayer->getPosition();
+    }
+    
+    /**
+     * 🎯 Обновить статус игры
+     */
+    private function updateGameStatus(Game $game, GameStatus $status): void
+    {
+        $reflection = new \ReflectionClass($game);
+        $statusProperty = $reflection->getProperty('status');
+        $statusProperty->setAccessible(true);
+        $statusProperty->setValue($game, $status);
+    }
+    
+    /**
+     * 🎯 Сохранить игру в репозитории
+     */
+    private function saveGame(Game $game): void
+    {
+        $repository = new \App\Domain\Game\Repositories\CachedGameRepository();
+        $repository->save($game);
+        \Log::info("💾 Game saved to repository after card distribution");
     }
 
     /**

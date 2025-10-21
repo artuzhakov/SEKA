@@ -153,7 +153,7 @@ class Player
 
     public function pass(): void
     {
-        $this->status = PlayerStatus::PASSED;
+        $this->status = PlayerStatus::FOLDED;
         $this->updateLastActionTime();
     }
 
@@ -167,6 +167,12 @@ class Player
     {
         $this->status = PlayerStatus::FOLDED;
         $this->cards = [];
+        $this->updateLastActionTime();
+    }
+
+    public function setStatus(PlayerStatus $status): void
+    {
+        $this->status = $status;
         $this->updateLastActionTime();
     }
 
@@ -200,6 +206,20 @@ class Player
             PlayerStatus::READY,
             PlayerStatus::DARK
         ]); 
+    }
+
+    // 🎯 Сброс ставки для нового раунда
+    public function resetBet(): void
+    {
+        $this->currentBet = 0;
+    }
+
+    // 🎯 Получить эффективную ставку (для темнящих игроков)
+    public function getEffectiveBet(): int
+    {
+        return $this->status === PlayerStatus::DARK 
+            ? (int)($this->currentBet * 2)
+            : $this->currentBet;
     }
 
     // 🎯 Методы для сброса состояния

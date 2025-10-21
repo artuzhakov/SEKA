@@ -12,7 +12,7 @@ enum GameStatus: string
     case BIDDING = 'bidding';
     case QUARREL = 'quarrel';
     case FINISHED = 'finished';
-    case CANCELLED = 'cancelled'; // 🎯 Добавляем новый статус
+    case CANCELLED = 'cancelled';
 
     public function canStart(): bool
     {
