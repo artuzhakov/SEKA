@@ -209,17 +209,25 @@ class BiddingService
     {
         $activePlayers = $game->getActivePlayers();
         
-        if (count($activePlayers) < 2) {
-            return true; // Остался один игрок - раунд завершен
+        // Остался один игрок - круг завершен
+        if (count($activePlayers) <= 1) {
+            return true;
         }
         
-        // 🎯 Все активные игроки сделали одинаковые ставки
-        $uniqueBets = [];
+        $currentBet = $game->getCurrentMaxBet();
+        $allActionsCompleted = true;
+        
         foreach ($activePlayers as $player) {
-            $uniqueBets[$player->getCurrentBet()] = true;
+            // Игрок не завершил круг если:
+            // - Его ставка не равна текущей И он не пропустил ход
+            // - ИЛИ он может сделать ход (не все игроки сделали равные ставки)
+            if ($player->getCurrentBet() !== $currentBet && !$player->hasChecked()) {
+                $allActionsCompleted = false;
+                break;
+            }
         }
         
-        return count($uniqueBets) === 1;
+        return $allActionsCompleted;
     }
 
     /**
@@ -270,4 +278,129 @@ class BiddingService
             $this->processPlayerAction($game, $currentPlayer, PlayerAction::FOLD);
         }
     }
+
+    /**
+     * 🎯 Получить доступные действия с учетом круга
+     */
+    public function getAvailableActions(Game $game, Player $player): array
+    {
+        $currentRound = $game->getCurrentRound();
+        $isRightOfDealer = $this->isPlayerRightOfDealer($game, $player);
+        
+        $actions = [PlayerAction::FOLD, PlayerAction::CALL, PlayerAction::RAISE];
+        
+        // Круг 1: ПРОПУСТИТЬ и ТЕМНАЯ только для игрока справа от дилера
+        if ($currentRound === 1 && $isRightOfDealer && !$player->hasChecked()) {
+            $actions[] = PlayerAction::CHECK;
+            
+            // ТЕМНАЯ доступна только если игрок еще не играл в темную в этой игре
+            if (!$player->hasPlayedDark() && !$this->hasAnyPlayerPlayedDark($game)) {
+                $actions[] = PlayerAction::DARK;
+            }
+        }
+        
+        // Круги 2-3: ВСКРЫТИЕ доступно, ПРОПУСТИТЬ/ТЕМНАЯ недоступны
+        if ($currentRound >= 2) {
+            $actions[] = PlayerAction::REVEAL;
+            
+            // ОТКРЫТЬ доступно только темнящим игрокам
+            if ($player->getStatus() === PlayerStatus::DARK) {
+                $actions[] = PlayerAction::OPEN;
+            }
+        }
+        
+        return $actions;
+    }
+
+    /**
+     * 🎯 Проверить есть ли в игре темнящие игроки
+     */
+    private function hasAnyPlayerPlayedDark(Game $game): bool
+    {
+        foreach ($game->getPlayers() as $player) {
+            if ($player->hasPlayedDark()) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    /**
+     * 🎯 Проверить является ли игрок справа от дилера
+     */
+    private function isPlayerRightOfDealer(Game $game, Player $player): bool
+    {
+        $rightPlayer = $game->getPlayerRightOfDealer();
+        return $rightPlayer && $rightPlayer->getId()->equals($player->getId());
+    }
+
+    public function shouldEndBiddingRound(Game $game): bool
+    {
+        $activePlayers = $game->getActivePlayers();
+        
+        // Остался один игрок
+        if (count($activePlayers) <= 1) {
+            return true;
+        }
+        
+        // Все активные игроки сделали равные ставки И прошли полный круг
+        $currentBet = $game->getCurrentMaxBet();
+        $allBetsEqual = true;
+        
+        foreach ($activePlayers as $player) {
+            if ($player->getCurrentBet() !== $currentBet && !$player->hasChecked()) {
+                $allBetsEqual = false;
+                break;
+            }
+        }
+        
+        return $allBetsEqual;
+    }
+
+    /**
+     * 🎯 Переход к следующему кругу или завершение торгов
+     */
+    public function moveToNextRound(Game $game): void
+    {
+        $currentRound = $game->getCurrentRound();
+        
+        if ($currentRound < 3) {
+            // Переход к следующему кругу
+            $game->setCurrentRound($currentRound + 1);
+            
+            // Сброс состояний игроков для нового круга
+            foreach ($game->getActivePlayers() as $player) {
+                $player->resetForNewBiddingRound();
+            }
+            
+            // Установка первого игрока нового круга (справа от дилера)
+            $this->setFirstPlayerOfRound($game);
+            
+        } else {
+            // Завершение торгов - переход к сравнению карт
+            $this->finishBiddingPhase($game);
+        }
+    }
+
+    /**
+     * 🎯 Установить первого игрока круга (справа от дилера)
+     */
+    private function setFirstPlayerOfRound(Game $game): void
+    {
+        $rightPlayer = $game->getPlayerRightOfDealer();
+        if ($rightPlayer) {
+            $game->setCurrentPlayerPosition($rightPlayer->getPosition());
+        }
+    }
+
+    /**
+     * 🎯 Завершение фазы торгов
+     */
+    private function finishBiddingPhase(Game $game): void
+    {
+        // Здесь будет логика сравнения карт и определения победителя
+        // Пока просто переводим в статус завершения
+        $game->setStatus(GameStatus::FINISHED);
+    }
+
 }

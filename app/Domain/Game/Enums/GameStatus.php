@@ -1,5 +1,6 @@
 <?php
 // app/Domain/Game/Enums/GameStatus.php
+
 declare(strict_types=1);
 
 namespace App\Domain\Game\Enums;
@@ -27,5 +28,10 @@ enum GameStatus: string
     public function isActive(): bool
     {
         return in_array($this, [self::ACTIVE, self::BIDDING, self::DISTRIBUTION]);
+    }
+
+    public function canAddPlayers(): bool
+    {
+        return $this === self::WAITING;
     }
 }

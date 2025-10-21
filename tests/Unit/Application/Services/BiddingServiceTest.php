@@ -5,10 +5,10 @@ namespace Tests\Unit\Application\Services;
 use Tests\TestCase;
 use App\Application\Services\BiddingService;
 use App\Domain\Game\Entities\Game;
-use App\Domain\Game\ValueObjects\GameId;
 use App\Domain\Game\Enums\GameStatus;
 use App\Domain\Game\Enums\GameMode;
 use App\Domain\Game\Entities\Player;
+use App\Domain\Game\ValueObjects\GameId; // ДОБАВИТЬ этот импорт
 use App\Domain\Game\ValueObjects\PlayerId;
 use App\Domain\Game\Enums\PlayerStatus;
 use App\Domain\Game\Enums\PlayerAction;
@@ -106,12 +106,38 @@ class BiddingServiceTest extends TestCase
         $this->assertTrue($newCurrentPlayer->isPlaying(), "New current player should be active");
     }
     
+    /** @test */
+    public function test_round_1_available_actions()
+    {
+        $game = $this->createGameWithDealer(2); // Дилер на позиции 2
+        $rightPlayer = $game->getPlayerRightOfDealer();
+        
+        $actions = $this->biddingService->getAvailableActions($game, $rightPlayer);
+        
+        $this->assertContains(PlayerAction::CHECK, $actions);
+        $this->assertContains(PlayerAction::DARK, $actions);
+    }
+    
+    /** @test */
+    public function test_round_2_available_actions()
+    {
+        $game = $this->createGameWithDealer(2);
+        $game->setCurrentRound(2);
+        
+        $player = $game->getPlayers()[0];
+        $actions = $this->biddingService->getAvailableActions($game, $player);
+        
+        $this->assertContains(PlayerAction::REVEAL, $actions);
+        $this->assertNotContains(PlayerAction::CHECK, $actions);
+        $this->assertNotContains(PlayerAction::DARK, $actions);
+    }
+    
     // Вспомогательные методы
     private function createTestGameWithPlayers(int $playerCount): Game
     {
         // Сначала создаем игру в статусе WAITING
         $game = new Game(
-            GameId::fromInt(1),
+            GameId::fromInt(1), // Теперь GameId распознается
             GameStatus::WAITING,
             1,
             GameMode::OPEN
@@ -152,5 +178,30 @@ class BiddingServiceTest extends TestCase
             }
         }
         return null;
+    }
+
+    private function createGameWithDealer(int $dealerPosition): Game
+    {
+        // ИСПРАВЛЕНО: создаем игру в статусе WAITING
+        $game = new Game(
+            GameId::fromInt(1), // Теперь GameId распознается
+            GameStatus::WAITING, // WAITING чтобы можно было добавлять игроков
+            1,
+            GameMode::OPEN
+        );
+        
+        // Добавляем 3 игроков
+        for ($i = 1; $i <= 3; $i++) {
+            $player = new Player(PlayerId::fromInt($i), $i, $i, PlayerStatus::ACTIVE, 1000);
+            $game->addPlayer($player);
+        }
+        
+        // Переводим в статус BIDDING после добавления игроков
+        $game->startBidding();
+        
+        $game->setDealerPosition($dealerPosition);
+        $game->setCurrentPlayerPosition($dealerPosition);
+        
+        return $game;
     }
 }

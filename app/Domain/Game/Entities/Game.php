@@ -14,6 +14,10 @@ class Game
 {
     private array $players = [];
     private array $events = [];
+    private int $currentRound = 1; // Текущий круг: 1, 2, 3
+    private int $tableLimit = 100; // Лимит стола (потолок)
+    private int $ante = 10;        // Минимальная ставка входа
+    private ?int $dealerPosition = null; // Позиция дилера
 
     public function __construct(
         private GameId $id,
@@ -48,7 +52,8 @@ class Game
             throw new DomainException('Player already in game');
         }
 
-        if ($this->status->isActive()) {
+        // ИСПРАВЛЕНО: используем метод enum
+        if (!$this->status->canAddPlayers()) {
             throw new DomainException('Cannot add player to active game');
         }
 
@@ -163,5 +168,42 @@ class Game
     public function getActivePlayers(): array
     {
         return array_filter($this->players, fn(Player $player) => $player->isPlaying());
+    }
+
+    public function getCurrentRound(): int { return $this->currentRound; }
+    public function setCurrentRound(int $round): void { $this->currentRound = $round; }
+    
+    public function getTableLimit(): int { return $this->tableLimit; }
+    public function setTableLimit(int $limit): void { $this->tableLimit = $limit; }
+    
+    public function getAnte(): int { return $this->ante; }
+    public function setAnte(int $ante): void { $this->ante = $ante; }
+    
+    public function getDealerPosition(): ?int { return $this->dealerPosition; }
+    public function setDealerPosition(int $position): void { $this->dealerPosition = $position; }
+
+    /**
+     * 🎯 Получить игрока справа от дилера
+     */
+    public function getPlayerRightOfDealer(): ?Player
+    {
+        if (!$this->dealerPosition) return null;
+        
+        $players = $this->getPlayers();
+        $positions = array_map(fn($p) => $p->getPosition(), $players);
+        sort($positions);
+        
+        $dealerIndex = array_search($this->dealerPosition, $positions);
+        $rightIndex = ($dealerIndex + 1) % count($positions);
+        
+        $rightPosition = $positions[$rightIndex];
+        
+        foreach ($players as $player) {
+            if ($player->getPosition() === $rightPosition) {
+                return $player;
+            }
+        }
+        
+        return null;
     }
 }

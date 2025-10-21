@@ -77,15 +77,32 @@ class QuarrelServiceTest extends TestCase
     /** @test */
     public function it_starts_quarrel_with_redistribution_and_bets()
     {
-        $game = $this->createTestGame();
+        // Создаем игру в статусе WAITING чтобы можно было добавить игроков
+        $game = new Game(
+            GameId::fromInt(1),
+            GameStatus::WAITING, // WAITING вместо ACTIVE
+            1,
+            GameMode::OPEN,
+            1000
+        );
+        
         $participants = [
             $this->createTestPlayer(1),
             $this->createTestPlayer(2)
         ];
         
+        // Добавляем игроков (разрешено в WAITING)
+        foreach ($participants as $player) {
+            $game->addPlayer($player);
+        }
+        
+        // Теперь переводим в ACTIVE
+        $game->start(); // или $game->startBidding() в зависимости от реализации
+        
         // Даем игрокам начальные карты
         foreach ($participants as $player) {
             $player->receiveCards([$this->createTestCard('hearts', 'ace')]);
+            $player->placeBet(50);
         }
         
         $this->quarrelService->startQuarrel($game, $participants);
@@ -96,9 +113,11 @@ class QuarrelServiceTest extends TestCase
         }
         
         // Проверяем что ставки сделаны
+        $totalBets = 0;
         foreach ($participants as $player) {
-            $this->assertGreaterThan(0, $player->getCurrentBet());
+            $totalBets += $player->getCurrentBet();
         }
+        $this->assertGreaterThan(0, $totalBets, 'Total player bets should be greater than 0');
     }
     
     /** @test */

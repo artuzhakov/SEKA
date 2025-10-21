@@ -12,6 +12,9 @@ class Player
 {
     private array $cards = [];
     private int $currentBet = 0;
+
+    private bool $hasChecked = false; // Пропустил ход в текущем круге
+    private bool $hasPlayedDark = false; // Играл ли в темную в этой игре
     
     // 🎯 Таймауты (в секундах)
     private const READY_TIMEOUT = 10;
@@ -239,5 +242,21 @@ class Player
     public function addToBalance(int $amount): void
     {
         $this->balance += $amount;
+    }
+
+    public function hasChecked(): bool { return $this->hasChecked; }
+    public function setChecked(bool $checked): void { $this->hasChecked = $checked; }
+    
+    public function hasPlayedDark(): bool { return $this->hasPlayedDark; }
+    public function setPlayedDark(bool $played): void { $this->hasPlayedDark = $played; }
+
+    /**
+     * 🎯 Сброс состояния для нового круга торгов
+     */
+    public function resetForNewBiddingRound(): void
+    {
+        $this->hasChecked = false;
+        $this->lastActionAt = null;
+        // currentBet НЕ сбрасываем - он накапливается
     }
 }

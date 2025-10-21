@@ -1,9 +1,17 @@
 <?php
 // tests/Unit/Domain/Game/Rules/QuarrelRuleTest.php
+
 namespace Tests\Unit\Domain\Game\Rules;
 
 use Tests\TestCase;
 use App\Domain\Game\Rules\QuarrelRule;
+use App\Domain\Game\Entities\Game;
+use App\Domain\Game\ValueObjects\GameId;
+use App\Domain\Game\Enums\GameStatus;
+use App\Domain\Game\Enums\GameMode;
+use App\Domain\Game\Entities\Player;
+use App\Domain\Game\ValueObjects\PlayerId;
+use App\Domain\Game\Enums\PlayerStatus;
 
 class QuarrelRuleTest extends TestCase
 {
@@ -77,21 +85,57 @@ class QuarrelRuleTest extends TestCase
     /** @test */
     public function it_calculates_quarrel_entry_bet_correctly()
     {
-        $game = $this->createGame(1, 'active');
-        // Устанавливаем банк через рефлексию, так как нет сеттера
-        $reflection = new \ReflectionClass($game);
-        $property = $reflection->getProperty('bank');
-        $property->setAccessible(true);
-        $property->setValue($game, 300);
+        // Создаем игру в WAITING статусе
+        $game = new Game(
+            GameId::fromInt(1),
+            GameStatus::WAITING,
+            1,
+            GameMode::OPEN,
+            0 // начальный банк
+        );
         
-        $participants = [
-            $this->createPlayer(1),
-            $this->createPlayer(2),
-            $this->createPlayer(3)
-        ];
+        $player1 = $this->createTestPlayer(1);
+        $player2 = $this->createTestPlayer(2);
+        $player3 = $this->createTestPlayer(3);
+        
+        // Добавляем игроков
+        $game->addPlayer($player1);
+        $game->addPlayer($player2);
+        $game->addPlayer($player3);
+        
+        // Устанавливаем ставки игроков (банк = сумма ставок)
+        $player1->placeBet(100);
+        $player2->placeBet(100);
+        $player3->placeBet(100);
+        
+        // Теперь банк игры должен быть 300
+        $participants = [$player1, $player2, $player3];
         
         $bet = $this->quarrelRule->calculateQuarrelEntryBet($game, $participants);
         
         $this->assertEquals(100, $bet, 'Ставка входа = банк / кол-во участников (300/3=100)');
+    }
+    
+    // Вспомогательные методы - ИСПРАВЛЕНО: protected вместо private
+    protected function createTestPlayer(int $id): Player
+    {
+        return new Player(
+            PlayerId::fromInt($id),
+            $id,
+            $id,
+            PlayerStatus::ACTIVE,
+            1000
+        );
+    }
+    
+    protected function createTestGame(int $id, string $status): Game
+    {
+        return new Game(
+            GameId::fromInt($id),
+            GameStatus::from($status),
+            1,
+            GameMode::OPEN,
+            0
+        );
     }
 }
