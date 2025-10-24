@@ -31,11 +31,10 @@ class CachedGameRepository
             return $game;
         }
         
-        \Log::info("❌ Game {$id} not found in cache, creating NEW game");
-        $newGame = $this->createNewGame($id);
-        $this->save($newGame);
+        // ✅ ИСПРАВЛЕНИЕ: возвращаем null если игра не найдена
+        \Log::info("❌ Game {$id} not found in cache");
+        return null;
         
-        return $newGame;
     }
 
     public function save(Game $game): void

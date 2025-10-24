@@ -38,6 +38,14 @@ class Player
         private int $balance
     ) {}
 
+    /**
+     * 🎯 Установить текущую ставку игрока
+     */
+    public function setCurrentBet(int $bet): void
+    {
+        $this->currentBet = $bet;
+    }
+
     // 🎯 Методы готовности
     public function markReady(): void
     {
@@ -168,7 +176,7 @@ class Player
 
     public function fold(): void
     {
-        $this->status = PlayerStatus::FOLDED;
+        $this->status = PlayerStatus::FOLDED; // 🎯 Должно быть FOLDED
         $this->cards = [];
         $this->updateLastActionTime();
     }
@@ -204,11 +212,13 @@ class Player
     
     public function isPlaying(): bool 
     { 
+        // 🎯 ИСПРАВЛЕНИЕ: Игрок играет только если он ACTIVE, READY или DARK
+        // И НЕ FOLDED и НЕ REVEALED (если revealed означает завершение хода)
         return in_array($this->status, [
             PlayerStatus::ACTIVE, 
             PlayerStatus::READY,
             PlayerStatus::DARK
-        ]); 
+        ]);
     }
 
     // 🎯 Сброс ставки для нового раунда
@@ -259,4 +269,14 @@ class Player
         $this->lastActionAt = null;
         // currentBet НЕ сбрасываем - он накапливается
     }
+
+    /**
+     * 🎯 Сбросить текущую ставку (для темной игры)
+     */
+    // public function resetCurrentBet(): void
+    // {
+    //     $this->currentBet = 0;
+    //     \Log::info("🔄 Player {$this->userId} current bet reset to 0");
+    // }
+
 }

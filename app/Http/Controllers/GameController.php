@@ -6,6 +6,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 // use App\Domain\Game\Repositories\TestGameRepository;
+use App\Domain\Game\Entities\Game;
 use App\Domain\Game\Repositories\InMemoryGameRepository;
 use App\Application\Services\GameService;
 use App\Application\Services\DistributionService;
@@ -32,6 +33,32 @@ class GameController extends Controller
         private QuarrelService $quarrelService,
         private ReadinessService $readinessService
     ) {}
+
+    /**
+     * 🎯 Принудительно запустить систему торгов (для тестирования)
+     */
+    public function startBidding(int $gameId): JsonResponse
+    {
+        $game = $this->getGameById($gameId);
+        
+        \Log::info("🎯 Forcing bidding start for game: " . $gameId);
+        
+        // Запускаем систему торгов
+        $this->biddingService->startBiddingRound($game);
+        
+        // Сохраняем игру
+        $repository = new \App\Domain\Game\Repositories\CachedGameRepository();
+        $repository->save($game);
+        
+        \Log::info("🎯 Bidding forced to start. Current player position: " . $game->getCurrentPlayerPosition());
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'Bidding round started',
+            'current_player_position' => $game->getCurrentPlayerPosition(),
+            'game_status' => $game->getStatus()->value
+        ]);
+    }
 
     /**
      * 🎯 Начать новую игру
@@ -83,6 +110,15 @@ class GameController extends Controller
         
         // 🎯 ИСПРАВЛЕНИЕ: Находим игрока вручную вместо getPlayerByUserId()
         $game = $this->readinessService->getGame($gameId);
+
+        // 🎯 ДОБАВЬТЕ ПРОВЕРКУ: если игра уже не в waiting, не пытаемся отмечать готовность
+        if ($game->getStatus() !== \App\Domain\Game\Enums\GameStatus::WAITING) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Game is already started or finished',
+                'game_status' => $game->getStatus()->value
+            ], 400);
+        }
         
         // Ищем игрока по user_id
         $player = null;
@@ -170,24 +206,21 @@ class GameController extends Controller
     {
         $game = $this->getGameById($gameId);
         
-        // 🎯 ДИАГНОСТИКА: выведем текущий статус игры
         \Log::info("Game status before distribution: " . $game->getStatus()->value);
-        \Log::info("Ready players count: " . $this->readinessService->getReadyPlayersCount($game));
-        \Log::info("Total players: " . count($game->getPlayers()));
         
-        // 🎯 Проверяем что игра активна
         if ($game->getStatus() !== \App\Domain\Game\Enums\GameStatus::ACTIVE) {
             return response()->json([
                 'success' => false,
-                'message' => 'Game is not active. Current status: ' . $game->getStatus()->value,
-                'current_status' => $game->getStatus()->value,
-                'ready_players' => $this->readinessService->getReadyPlayersCount($game)
+                'message' => 'Game is not active. Current status: ' . $game->getStatus()->value
             ], 400);
         }
         
+        // 🎯 ИСПРАВЛЕНИЕ: Вызываем collectAnte как метод сервиса, а не endpoint
+        $anteResult = $this->collectAnteInternal($game);
+        
+        // 🎯 ПОТОМ раздаем карты
         $distributionResult = $this->distributionService->distributeCards($game);
 
-        // 🎯 Отправляем событие CardsDistributed
         broadcast(new CardsDistributed(
             gameId: $gameId,
             playerCards: $this->formatPlayerCards($distributionResult),
@@ -197,13 +230,45 @@ class GameController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => 'Cards distributed',
+            'message' => 'Cards distributed and ante collected',
+            'ante_collected' => $anteResult['total_ante'] ?? 0,
             'game_status' => $game->getStatus()->value
         ]);
     }
 
     /**
-     * 🎯 Действие игрока (ставка, пас, вскрытие и т.д.)
+     * 🎯 Внутренний метод для сбора анте (без HTTP response)
+     */
+    private function collectAnteInternal(Game $game): array
+    {
+        $ante = 10; // Стандартное анте
+        $totalAnte = 0;
+        
+        foreach ($game->getActivePlayers() as $player) {
+            if ($player->getBalance() >= $ante) {
+                $player->placeBet($ante);
+                $totalAnte += $ante;
+                \Log::info("💰 Ante collected from player {$player->getUserId()}: {$ante} chips");
+            } else {
+                \Log::warning("⚠️ Player {$player->getUserId()} has insufficient balance for ante");
+            }
+        }
+        
+        $game->setBank($totalAnte);
+        $game->setCurrentMaxBet($ante);
+        
+        // Сохраняем игру
+        $repository = new \App\Domain\Game\Repositories\CachedGameRepository();
+        $repository->save($game);
+        
+        return [
+            'total_ante' => $totalAnte,
+            'bank' => $totalAnte
+        ];
+    }
+
+    /**
+     * 🎯 Действие игрока (ставка, пас, вскрытие и т.д.) - УЛУЧШЕННАЯ ВЕРСИЯ
      */
     public function playerAction(Request $request, int $gameId): JsonResponse
     {
@@ -213,33 +278,91 @@ class GameController extends Controller
             'bet_amount' => 'sometimes|integer|min:0'
         ]);
 
-        $game = $this->getGameById($gameId);
-        $player = $this->getPlayerById($game, (int)$validated['player_id']);
-        $action = \App\Domain\Game\Enums\PlayerAction::from($validated['action']);
+        try {
+            $game = $this->getGameById($gameId);
+            $player = $this->getPlayerById($game, (int)$validated['player_id']);
+            $action = \App\Domain\Game\Enums\PlayerAction::from($validated['action']);
 
-        $this->biddingService->processPlayerAction(
-            $game, 
-            $player, 
-            $action, 
-            $validated['bet_amount'] ?? null
-        );
+            \Log::info("🎯 Player Action Request", [
+                'game_id' => $gameId,
+                'player_id' => $validated['player_id'],
+                'action' => $action->value,
+                'bet_amount' => $validated['bet_amount'] ?? null,
+                'current_position_before' => $game->getCurrentPlayerPosition(),
+                'player_status' => $player->getStatus()->value,
+                'player_bet' => $player->getCurrentBet()
+            ]);
 
-        broadcast(new PlayerActionTaken(
-            gameId: $gameId,
-            playerId: $player->getUserId(),
-            action: $action->value,
-            betAmount: $validated['bet_amount'] ?? null,
-            newPlayerPosition: $game->getCurrentPlayerPosition(),
-            bank: $game->getBank()
-        ));
+            // 🎯 Проверяем доступные действия перед выполнением
+            $availableActions = $this->biddingService->getAvailableActions($game, $player);
+            $availableActionsValues = array_map(fn($a) => $a->value, $availableActions);
+            
+            \Log::info("🎯 Available actions for player: " . implode(', ', $availableActionsValues));
+            
+            if (!in_array($action, $availableActions)) {
+                throw new \DomainException("Action {$action->value} is not available. Available: " . implode(', ', $availableActionsValues));
+            }
 
-        return response()->json([
-            'success' => true,
-            'action' => $action->value,
-            'player_id' => $player->getUserId(),
-            'current_player_position' => $game->getCurrentPlayerPosition(),
-            'game_status' => $game->getStatus()->value
-        ]);
+            $this->biddingService->processPlayerAction(
+                $game, 
+                $player, 
+                $action, 
+                $validated['bet_amount'] ?? null
+            );
+
+            // 🎯 ПОЛУЧАЕМ ОБНОВЛЕННУЮ ИГРУ ДЛЯ АКТУАЛЬНЫХ ДАННЫХ
+            $updatedGame = $this->getGameById($gameId);
+            $nextPlayer = $this->getCurrentPlayerFromGame($updatedGame);
+            
+            \Log::info("🎯 Player Action Completed Successfully", [
+                'action' => $action->value,
+                'new_current_position' => $updatedGame->getCurrentPlayerPosition(),
+                'next_player_id' => $nextPlayer ? $nextPlayer->getUserId() : null,
+                'game_status' => $updatedGame->getStatus()->value,
+                'bank' => $updatedGame->getBank(),
+                'max_bet' => $updatedGame->getCurrentMaxBet()
+            ]);
+
+            // 🎯 Отправляем broadcast событие
+            broadcast(new PlayerActionTaken(
+                gameId: $gameId,
+                playerId: $player->getUserId(),
+                action: $action->value,
+                betAmount: $validated['bet_amount'] ?? null,
+                newPlayerPosition: $updatedGame->getCurrentPlayerPosition(),
+                bank: $updatedGame->getBank()
+                // 🎯 УБЕРИТЕ playerStatus - его нет в конструкторе PlayerActionTaken
+            ));
+
+            return response()->json([
+                'success' => true,
+                'action' => $action->value,
+                'player_id' => $player->getUserId(),
+                'player_status' => $player->getStatus()->value,
+                'current_player_position' => $updatedGame->getCurrentPlayerPosition(),
+                'next_player_id' => $nextPlayer ? $nextPlayer->getUserId() : null,
+                'next_player_actions' => $this->getAvailableActionsForCurrentPlayer($updatedGame),
+                'game_status' => $updatedGame->getStatus()->value,
+                'bank' => $updatedGame->getBank(),
+                'max_bet' => $updatedGame->getCurrentMaxBet(),
+                'message' => 'Action processed successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error("❌ Player Action Failed", [
+                'game_id' => $gameId,
+                'player_id' => $validated['player_id'] ?? 'unknown',
+                'action' => $validated['action'] ?? 'unknown',
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+                'error_details' => 'Action failed: ' . $e->getMessage()
+            ], 400);
+        }
     }
 
     /**
@@ -394,6 +517,13 @@ class GameController extends Controller
     public function getStatus(int $gameId): JsonResponse
     {
         $game = $this->getGameById($gameId);
+        
+        $players = $this->formatPlayersForApi($game);
+        
+        \Log::info("📊 GET STATUS - Players data:", [
+            'count' => count($players),
+            'players' => $players
+        ]);
 
         return response()->json([
             'success' => true,
@@ -402,62 +532,187 @@ class GameController extends Controller
             'current_player_position' => $game->getCurrentPlayerPosition(),
             'ready_players_count' => $this->readinessService->getReadyPlayersCount($game),
             'total_players' => count($game->getPlayers()),
-            'bank' => $game->getBank()
+            'bank' => $game->getBank(),
+            'players' => $players
         ]);
     }
 
     /**
-     * 🎯 Получить игру по ID (РЕАЛЬНАЯ РЕАЛИЗАЦИЯ)
+     * 🎯 Форматировать игроков для статуса
      */
-    // private function getGameById(int $gameId)
-    // {
-    //     // 🎯 Временное решение - создаем реальную игру с игроками
-    //     // В реальности здесь будет GameRepository::find($gameId)
-        
-    //     $game = new \App\Domain\Game\Entities\Game(
-    //         \App\Domain\Game\ValueObjects\GameId::fromInt($gameId),
-    //         \App\Domain\Game\Enums\GameStatus::WAITING,
-    //         $gameId,
-    //         \App\Domain\Game\Enums\GameMode::OPEN
-    //     );
-        
-    //     // 🎯 Добавляем тестовых игроков
-    //     $players = [
-    //         new \App\Domain\Game\Entities\Player(
-    //             \App\Domain\Game\ValueObjects\PlayerId::fromInt(1),
-    //             \App\Domain\Game\ValueObjects\UserId::fromInt(1),
-    //             \App\Domain\Game\Enums\PlayerStatus::WAITING,
-    //             1000,
-    //             1
-    //         ),
-    //         new \App\Domain\Game\Entities\Player(
-    //             \App\Domain\Game\ValueObjects\PlayerId::fromInt(2), 
-    //             \App\Domain\Game\ValueObjects\UserId::fromInt(2),
-    //             \App\Domain\Game\Enums\PlayerStatus::WAITING,
-    //             1000,
-    //             2
-    //         ),
-    //         new \App\Domain\Game\Entities\Player(
-    //             \App\Domain\Game\ValueObjects\PlayerId::fromInt(3),
-    //             \App\Domain\Game\ValueObjects\UserId::fromInt(3),
-    //             \App\Domain\Game\Enums\PlayerStatus::WAITING,
-    //             1000, 
-    //             3
-    //         )
-    //     ];
-        
-    //     // 🎯 Используем рефлексию чтобы установить игроков (временное решение)
-    //     $reflection = new \ReflectionClass($game);
-    //     $playersProperty = $reflection->getProperty('players');
-    //     $playersProperty->setAccessible(true);
-    //     $playersProperty->setValue($game, $players);
+    private function formatPlayersForStatus($game): array  // 🎯 УБЕРИТЕ ТИП ИЛИ ИСПОЛЬЗУЙТЕ ПРАВИЛЬНЫЙ
+    {
+        $players = [];
+        foreach ($game->getPlayers() as $player) {
+            $players[] = [
+                'id' => $player->getUserId(),
+                'position' => $player->getPosition(),
+                'status' => $player->getStatus()->value,
+                'balance' => $player->getBalance(),
+                'current_bet' => $player->getCurrentBet(),
+                'is_ready' => $player->isReady(),
+                'is_playing' => $player->isPlaying(),
+                'is_playing_dark' => $player->getStatus() === \App\Domain\Game\Enums\PlayerStatus::DARK
+            ];
+        }
+        return $players;
+    }
 
-    //     return $this->gameRepository->find(
-    //         \App\Domain\Game\ValueObjects\GameId::fromInt($gameId)
-    //     );
+    /**
+     * 🎯 Получить полную информацию об игре
+     */
+    public function getGameInfo(int $gameId): JsonResponse
+    {
+        try {
+            $game = $this->getGameById($gameId);
+            
+            $players = $this->formatPlayersForApi($game);
+            
+            \Log::info("📊 GET GAME INFO - Players data:", [
+                'count' => count($players),
+                'players' => $players
+            ]);
+            
+            return response()->json([
+                'success' => true,
+                'game' => [
+                    'id' => $gameId,
+                    'status' => $game->getStatus()->value,
+                    'current_player_position' => $game->getCurrentPlayerPosition(),
+                    'bank' => $game->getBank(),
+                    'max_bet' => $game->getCurrentMaxBet(),
+                    'round' => $game->getCurrentRound(),
+                    'players' => $players
+                ]
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage()
+            ], 400);
+        }
+    }
+
+    /**
+     * 🎯 Форматировать игроков для API
+     */
+    private function formatPlayersForApi($game): array
+    {
+        $players = [];
         
-    //     // return $game;
-    // }
+        \Log::info("🎯 Formatting players for API", [
+            'game_type' => get_class($game),
+            'has_getPlayers' => method_exists($game, 'getPlayers')
+        ]);
+        
+        if (!method_exists($game, 'getPlayers')) {
+            \Log::error('Game object does not have getPlayers method');
+            return $players;
+        }
+        
+        try {
+            $gamePlayers = $game->getPlayers();
+            \Log::info("🎯 Found players in game:", ['count' => count($gamePlayers)]);
+            
+            foreach ($gamePlayers as $index => $player) {
+                \Log::info("🎯 Processing player:", [
+                    'index' => $index,
+                    'player_type' => get_class($player),
+                    'has_getUserId' => method_exists($player, 'getUserId'),
+                    'has_getPosition' => method_exists($player, 'getPosition')
+                ]);
+                
+                $playerData = [
+                    'id' => method_exists($player, 'getUserId') ? $player->getUserId() : ($index + 1),
+                    'position' => method_exists($player, 'getPosition') ? $player->getPosition() : ($index + 1),
+                    'status' => 'active',
+                    'balance' => method_exists($player, 'getBalance') ? $player->getBalance() : 1000,
+                    'current_bet' => method_exists($player, 'getCurrentBet') ? $player->getCurrentBet() : 0,
+                    'is_ready' => method_exists($player, 'isReady') ? $player->isReady() : false,
+                    'is_playing' => method_exists($player, 'isPlaying') ? $player->isPlaying() : true,
+                    'is_playing_dark' => false
+                ];
+                
+                // 🎯 Пробуем получить реальный статус
+                if (method_exists($player, 'getStatus')) {
+                    try {
+                        $status = $player->getStatus();
+                        $playerData['status'] = method_exists($status, 'value') ? $status->value : 'active';
+                        $playerData['is_playing_dark'] = $status === \App\Domain\Game\Enums\PlayerStatus::DARK;
+                    } catch (\Exception $e) {
+                        \Log::warning('Error getting player status', ['error' => $e->getMessage()]);
+                    }
+                }
+                
+                $players[] = $playerData;
+                \Log::info("🎯 Added player to response:", $playerData);
+            }
+            
+        } catch (\Exception $e) {
+            \Log::error('Error in formatPlayersForApi', ['error' => $e->getMessage()]);
+        }
+        
+        \Log::info("🎯 Final players array:", ['count' => count($players), 'players' => $players]);
+        
+        return $players;
+    }
+
+    /**
+     * 🎯 Тестовый endpoint для получения игроков
+     */
+    public function getTestPlayers(int $gameId): JsonResponse
+    {
+        try {
+            // 🎯 ВРЕМЕННО: Создаем тестовых игроков
+            $testPlayers = [
+                [
+                    'id' => 1,
+                    'position' => 1,
+                    'status' => 'active',
+                    'balance' => 1000,
+                    'current_bet' => 0,
+                    'is_ready' => true,
+                    'is_playing' => true,
+                    'is_playing_dark' => false
+                ],
+                [
+                    'id' => 2,
+                    'position' => 2,
+                    'status' => 'active', 
+                    'balance' => 1000,
+                    'current_bet' => 0,
+                    'is_ready' => true,
+                    'is_playing' => true,
+                    'is_playing_dark' => false
+                ],
+                [
+                    'id' => 3,
+                    'position' => 3,
+                    'status' => 'active',
+                    'balance' => 1000,
+                    'current_bet' => 0,
+                    'is_ready' => false,
+                    'is_playing' => true,
+                    'is_playing_dark' => false
+                ]
+            ];
+            
+            \Log::info("🎯 TEST PLAYERS RETURNED", ['count' => count($testPlayers)]);
+            
+            return response()->json([
+                'success' => true,
+                'players' => $testPlayers,
+                'message' => 'Test players data'
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage()
+            ], 400);
+        }
+    }
 
     /**
      * 🎯 Получить игру по ID (ИСПРАВЛЕННАЯ ВЕРСИЯ С ДИАГНОСТИКОЙ)
@@ -467,13 +722,24 @@ class GameController extends Controller
         $repository = new \App\Domain\Game\Repositories\CachedGameRepository();
         $game = $repository->find(\App\Domain\Game\ValueObjects\GameId::fromInt($gameId));
         
+        // ✅ Если игра не найдена - создаем через GameService
+        if (!$game) {
+            \Log::info("🎮 Creating NEW game via GameService for ID: {$gameId}");
+            
+            // Создаем DTO для новой игры
+            $dto = new \App\Application\DTO\StartGameDTO(
+                roomId: $gameId,
+                playerIds: [1, 2, 3] // или получайте из запроса
+            );
+            
+            $game = $this->gameService->startNewGame($dto);
+            $repository->save($game);
+            
+            \Log::info("🎮 New game created with players: " . count($game->getPlayers()));
+        }
+        
         \Log::info("Game {$gameId} status: " . $game->getStatus()->value);
         \Log::info("Game {$gameId} players: " . count($game->getPlayers()));
-        
-        // 🎯 Детальная информация об игроках
-        foreach ($game->getPlayers() as $player) {
-            \Log::info("Player in game: {$player->getUserId()}, status: {$player->getStatus()->value}");
-        }
         
         return $game;
     }
@@ -665,6 +931,231 @@ class GameController extends Controller
             'success' => true,
             'message' => 'Game state cleared successfully'
         ]);
+    }
+
+    /**
+     * 🎯 Получить полное состояние игры с информацией о текущем игроке
+     */
+    public function getGameState($gameId)
+    {
+        try {
+            $game = $this->getGameById($gameId);
+            
+            return response()->json([
+                'status' => 'success',
+                'game' => [
+                    'id' => $game->getId()->toInt(),
+                    'status' => $game->getStatus()->value,
+                    'current_player_position' => $game->getCurrentPlayerPosition(),
+                    'bank' => $game->getBank(),
+                    'max_bet' => $game->getCurrentMaxBet(),
+                    'round' => $game->getCurrentRound(),
+                    'players' => $this->formatPlayersState($game),
+                    'current_player_actions' => $this->getAvailableActionsForCurrentPlayer($game)
+                ]
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage()
+            ], 400);
+        }
+    }
+
+    /**
+     * 🎯 Форматировать состояние игроков
+     */
+    private function formatPlayersState($game)
+    {
+        $players = [];
+        foreach ($game->getPlayers() as $player) {
+            $players[] = [
+                'id' => $player->getUserId(),
+                'position' => $player->getPosition(),
+                'chips' => $player->getBalance(),
+                'current_bet' => $player->getCurrentBet(),
+                'is_playing' => $player->isPlaying(),
+                'is_playing_dark' => $player->getStatus() === \App\Domain\Game\Enums\PlayerStatus::DARK,
+                'has_folded' => $player->hasFolded(),
+                'is_current_turn' => $player->getPosition() === $game->getCurrentPlayerPosition(),
+                'status' => $player->getStatus()->value,
+                'cards_count' => count($player->getCards())
+            ];
+        }
+        return $players;
+    }
+
+    /**
+     * 🎯 Получить доступные действия для текущего игрока
+     */
+    private function getAvailableActionsForCurrentPlayer($game)
+    {
+        $currentPlayer = $this->getCurrentPlayerFromGame($game);
+        if (!$currentPlayer) {
+            return [];
+        }
+        
+        try {
+            $actions = $this->biddingService->getAvailableActions($game, $currentPlayer);
+            return array_map(fn($action) => $action->value, $actions);
+        } catch (\Exception $e) {
+            \Log::error("Error getting available actions: " . $e->getMessage());
+            return [];
+        }
+    }
+
+    /**
+     * 🎯 Получить текущего игрока из игры
+     */
+    private function getCurrentPlayerFromGame($game)
+    {
+        $currentPosition = $game->getCurrentPlayerPosition();
+        foreach ($game->getPlayers() as $player) {
+            if ($player->getPosition() === $currentPosition && $player->isPlaying()) {
+                return $player;
+            }
+        }
+        return null;
+    }
+
+    private function getAvailableActions(Game $game)
+    {
+        $currentPlayer = $game->getCurrentPlayer();
+        if (!$currentPlayer) {
+            return [];
+        }
+        
+        return $this->biddingService->getAvailableActions($game, $currentPlayer);
+    }
+
+    /**
+     * 🎯 Получить полное состояние игры (новый endpoint)
+     */
+    public function getFullState(int $gameId): JsonResponse
+    {
+        try {
+            $game = $this->getGameById($gameId);
+            $currentPlayer = $this->getCurrentPlayerFromGame($game);
+
+            return response()->json([
+                'success' => true,
+                'game' => [
+                    'id' => $gameId,
+                    'status' => $game->getStatus()->value,
+                    'current_player_position' => $game->getCurrentPlayerPosition(),
+                    'current_player_id' => $currentPlayer ? $currentPlayer->getUserId() : null,
+                    'bank' => $game->getBank(),
+                    'max_bet' => $game->getCurrentMaxBet(),
+                    'round' => $game->getCurrentRound(),
+                    'players' => $this->formatPlayersState($game),
+                    'current_player_actions' => $this->getAvailableActionsForCurrentPlayer($game)
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage()
+            ], 400);
+        }
+    }
+
+    /**
+     * 🎯 Получить карты игроков
+     */
+    public function getPlayerCards(int $gameId): JsonResponse
+    {
+        try {
+            $game = $this->getGameById($gameId);
+            $playerCards = [];
+
+            foreach ($game->getPlayers() as $player) {
+                $cards = [];
+                foreach ($player->getCards() as $card) {
+                    // Преобразуем карту в читаемый формат
+                    $cards[] = $this->formatCard($card);
+                }
+                $playerCards[$player->getUserId()] = $cards;
+            }
+
+            return response()->json([
+                'success' => true,
+                'player_cards' => $playerCards
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage()
+            ], 400);
+        }
+    }
+
+    /**
+     * 🎯 Форматировать карту для отображения
+     */
+    private function formatCard($card): string
+    {
+        if (method_exists($card, 'getRank') && method_exists($card, 'getSuit')) {
+            $rank = $card->getRank();
+            $suit = $card->getSuit();
+            
+            $rankMap = [
+                'six' => '6', 'seven' => '7', 'eight' => '8', 'nine' => '9', 'ten' => '10',
+                'jack' => 'J', 'queen' => 'Q', 'king' => 'K', 'ace' => 'A'
+            ];
+            
+            $suitMap = [
+                'hearts' => '♥', 'diamonds' => '♦', 'clubs' => '♣', 'spades' => '♠'
+            ];
+            
+            return ($rankMap[$rank] ?? $rank) . ($suitMap[$suit] ?? $suit);
+        }
+        
+        return $card->toString() ?? '?';
+    }
+
+    /**
+     * 🎯 Списать анте с игроков
+     */
+    public function collectAnte(int $gameId): JsonResponse
+    {
+        try {
+            $game = $this->getGameById($gameId);
+            $ante = 10; // Стандартное анте
+            $totalAnte = 0;
+            
+            foreach ($game->getActivePlayers() as $player) {
+                if ($player->getBalance() >= $ante) {
+                    $player->placeBet($ante);
+                    $totalAnte += $ante;
+                    \Log::info("💰 Ante collected from player {$player->getUserId()}: {$ante} chips");
+                } else {
+                    \Log::warning("⚠️ Player {$player->getUserId()} has insufficient balance for ante");
+                }
+            }
+            
+            $game->setBank($totalAnte);
+            $game->setCurrentMaxBet($ante);
+            
+            // Сохраняем игру
+            $repository = new \App\Domain\Game\Repositories\CachedGameRepository();
+            $repository->save($game);
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Ante collected',
+                'total_ante' => $totalAnte,
+                'bank' => $totalAnte
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage()
+            ], 400);
+        }
     }
 
 }

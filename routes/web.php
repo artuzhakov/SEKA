@@ -2,7 +2,6 @@
 
 use App\Models\User;
 use Inertia\Inertia;
-use App\Models\WalletAccountGame;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Foundation\Application;
 use App\Http\Controllers\GameController;
@@ -19,6 +18,7 @@ use App\Http\Controllers\ProfileController;
 |
 */
 
+// 🎯 Public Routes
 Route::get('/', function () {
     return Inertia::render('Welcome', [
         'canLogin' => Route::has('login'),
@@ -28,36 +28,66 @@ Route::get('/', function () {
     ]);
 })->name('home');
 
-Route::get('/dashboard', function () {
-    $wallet = User::find(auth()->id())->wallet;
-    return inertia('Dashboard', compact('wallet'));
-})->middleware(['auth', 'verified'])->name('dashboard');
-
-Route::middleware('auth')->group(function () {
-    Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
-    Route::get('/profile/getOnlineStatus/{userId}', [ProfileController::class, 'getOnlineStatus'])->name('profile.getOnlineStatus');
-    Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
-    Route::post('/profile/updateOnlineStatus', [ProfileController::class, 'updateOnlineStatus'])->name('profile.updateOnlineStatus');
-    Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
-});
-
-// Добавляем маршрут для теста Pusher
+// 🎯 Public test routes
 Route::get('/pusher-test', function () {
     return Inertia::render('PusherTest');
 });
 
-Route::get('/game/{id}', [GameController::class, 'show'])->name('game.show');
-
-Route::get('/seka-game/{gameId}', function ($gameId) {
-    return Inertia::render('SekaGame', ['gameId' => (int)$gameId]);
-});
-
+// 🎯 Authentication test route
 Route::get('/test-auth', function() {
     return [
         'user_id' => Auth::id(),
         'user' => Auth::user(),
         'check' => Auth::check()
     ];
-})->middleware('auth'); // Требует аутентификации
+})->middleware('auth');
+
+// 🎯 PROTECTED ROUTES (Require authentication)
+Route::middleware(['auth', 'verified'])->group(function () {
+    
+    // 🎯 Dashboard
+    Route::get('/dashboard', function () {
+        $user = Auth::user();
+        $wallet = $user->wallet;
+        return Inertia::render('Dashboard', [
+            'wallet' => $wallet,
+            'user' => $user
+        ]);
+    })->name('dashboard');
+
+    // 🎯 SEKA Game Routes
+    Route::get('/seka-lobby', function () {
+        $user = Auth::user();
+        return Inertia::render('SekaLobby', [
+            'user' => $user
+        ]);
+    })->name('seka.lobby');
+
+    Route::get('/seka-game/{gameId}', function ($gameId) {
+        $user = Auth::user();
+        
+        // Здесь можно добавить проверку доступа к игре
+        $hasAccess = true; // Заглушка - в реальности проверять через GameService
+        
+        if (!$hasAccess) {
+            abort(403, 'Access denied to this game');
+        }
+
+        return Inertia::render('SekaGame', [
+            'gameId' => (int)$gameId,
+            'user' => $user
+        ]);
+    })->name('seka.game');
+
+    // 🎯 Profile Management
+    Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
+    Route::get('/profile/getOnlineStatus/{userId}', [ProfileController::class, 'getOnlineStatus'])->name('profile.getOnlineStatus');
+    Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
+    Route::post('/profile/updateOnlineStatus', [ProfileController::class, 'updateOnlineStatus'])->name('profile.updateOnlineStatus');
+    Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
+
+    // 🎯 Game Management
+    Route::get('/game/{id}', [GameController::class, 'show'])->name('game.show');
+});
 
 require __DIR__ . '/auth.php';

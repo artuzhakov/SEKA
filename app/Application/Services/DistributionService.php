@@ -13,6 +13,10 @@ use App\Domain\Game\Enums\GameStatus;
 
 class DistributionService
 {
+
+    public function __construct(
+        private BiddingService $biddingService
+    ) {}
     
     /**
      * 🎯 Раздать карты всем игрокам
@@ -38,17 +42,11 @@ class DistributionService
             }
             $playerCards[$player->getUserId()] = $playerHand;
             
-            // 🎯 Сохраняем карты в объект игрока
-            if (method_exists($player, 'receiveCards')) {
-                $player->receiveCards($playerHand);
-            }
-            
             \Log::info("🎴 Player {$player->getUserId()} received " . count($playerHand) . " cards");
         }
         
-        // 🎯 Выбрать случайного дилера
-        $dealerPosition = $this->selectRandomDealer($game);
-        $game->setCurrentPlayerPosition($dealerPosition);
+        // 🎯 Запускаем систему торгов через BiddingService
+        $this->biddingService->startBiddingRound($game);
         
         // 🎯 Обновить статус игры на BIDDING
         $this->updateGameStatus($game, GameStatus::BIDDING);
@@ -56,14 +54,34 @@ class DistributionService
         // 🎯 Сохраняем игру после раздачи
         $this->saveGame($game);
         
-        \Log::info("🎴 Distribution complete. Dealer: {$dealerPosition}, Status: " . $game->getStatus()->value);
+        \Log::info("🎴 Distribution complete. Status: " . $game->getStatus()->value);
         
         return [
             'player_cards' => $playerCards,
             'community_cards' => [],
             'round' => 'preflop',
-            'dealer_position' => $dealerPosition
+            'dealer_position' => $game->getCurrentPlayerPosition()
         ];
+    }
+
+    // 🎯 ДОБАВЬТЕ ЭТОТ МЕТОД В BiddingService ИЛИ DistributionService
+    private function startBiddingRound(Game $game): void
+    {
+        \Log::info("🎯 Starting bidding round for game: " . $game->getId()->toInt());
+        
+        // Устанавливаем начальные значения для торгов
+        $game->setCurrentBiddingRound(1);
+        $game->setCurrentMaxBet(0);
+        $game->setBank(0);
+        
+        // Сбрасываем ставки игроков для нового раунда
+        foreach ($game->getActivePlayers() as $player) {
+            $player->setCurrentBet(0);
+            $player->setHasFolded(false);
+            // Другие сбросы состояний если нужно
+        }
+        
+        \Log::info("🎯 Bidding round initialized. First player position: " . $game->getCurrentPlayerPosition());
     }
 
     /**
