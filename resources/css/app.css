@@ -2,22 +2,238 @@
 @tailwind components;
 @tailwind utilities;
 
-input[type="number"]::-webkit-outer-spin-button,
-input[type="number"]::-webkit-inner-spin-button {
-    -webkit-appearance: none;
-    margin: 0;
+/* SEKA Global Styles */
+@layer base {
+    * {
+        box-sizing: border-box;
+    }
+    
+    body {
+        @apply bg-gray-900 text-white font-sans;
+    }
+
+    /* Стили для скроллбара */
+    ::-webkit-scrollbar {
+        width: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+        @apply bg-gray-800;
+    }
+
+    ::-webkit-scrollbar-thumb {
+        @apply bg-purple-600 rounded-full;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+        @apply bg-purple-500;
+    }
 }
 
-input[type="number"] {
-    -moz-appearance: textfield;
+@layer components {
+    /* Кнопки в стиле SEKA */
+    .btn-seka {
+        @apply px-6 py-3 rounded-xl font-bold transition-all duration-300 transform hover:scale-105 active:scale-95;
+    }
+
+    .btn-seka-primary {
+        @apply btn-seka bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white shadow-lg;
+    }
+
+    .btn-seka-secondary {
+        @apply btn-seka bg-gray-700 hover:bg-gray-600 text-white border border-gray-600;
+    }
+
+    .btn-seka-success {
+        @apply btn-seka bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-700 hover:to-teal-700 text-white;
+    }
+
+    .btn-seka-danger {
+        @apply btn-seka bg-gradient-to-r from-red-600 to-pink-600 hover:from-red-700 hover:to-pink-700 text-white;
+    }
+
+    /* Карточки в стиле SEKA */
+    .card-seka {
+        @apply bg-gray-800 rounded-2xl border border-gray-700 p-6 transition-all duration-300 hover:border-purple-500;
+    }
+
+    .card-seka-hover {
+        @apply card-seka hover:transform hover:scale-105 cursor-pointer;
+    }
+
+    /* Input в стиле SEKA */
+    .input-seka {
+        @apply w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-white placeholder-gray-400 transition-all duration-300;
+    }
+
+    .input-seka:disabled {
+        @apply opacity-50 cursor-not-allowed;
+    }
+
+    /* Badges в стиле SEKA */
+    .badge-seka {
+        @apply px-3 py-1 rounded-full text-xs font-bold;
+    }
+
+    .badge-seka-success {
+        @apply badge-seka bg-green-500 text-white;
+    }
+
+    .badge-seka-warning {
+        @apply badge-seka bg-yellow-500 text-white;
+    }
+
+    .badge-seka-info {
+        @apply badge-seka bg-blue-500 text-white;
+    }
+
+    .badge-seka-danger {
+        @apply badge-seka bg-red-500 text-white;
+    }
+
+    /* Аватары игроков */
+    .avatar-seka {
+        @apply w-10 h-10 rounded-full border-2 border-gray-700 flex items-center justify-center font-bold text-white bg-gradient-to-br from-purple-500 to-blue-500;
+    }
+
+    .avatar-seka-sm {
+        @apply avatar-seka w-8 h-8 text-xs;
+    }
+
+    .avatar-seka-lg {
+        @apply avatar-seka w-12 h-12 text-base;
+    }
+
+    /* Градиентный текст */
+    .text-gradient {
+        @apply bg-gradient-to-r from-purple-400 to-blue-400 bg-clip-text text-transparent;
+    }
+
+    /* Анимации */
+    @keyframes pulse-glow {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
+    }
+
+    .pulse-glow {
+        animation: pulse-glow 2s infinite;
+    }
+
+    /* Уведомления */
+    .notification-seka {
+        @apply fixed top-4 right-4 z-50 p-4 rounded-xl border-l-4 shadow-lg transform transition-all duration-300;
+    }
+
+    .notification-seka-success {
+        @apply notification-seka bg-green-500/10 border-green-500 text-green-400;
+    }
+
+    .notification-seka-error {
+        @apply notification-seka bg-red-500/10 border-red-500 text-red-400;
+    }
+
+    .notification-seka-warning {
+        @apply notification-seka bg-yellow-500/10 border-yellow-500 text-yellow-400;
+    }
+
+    .notification-seka-info {
+        @apply notification-seka bg-blue-500/10 border-blue-500 text-blue-400;
+    }
 }
 
-.slide-enter-active,
-.slide-leave-active {
-    transition: transform 0.3s ease;
+@layer utilities {
+    /* Градиентные фоны */
+    .bg-seka-primary {
+        @apply bg-gradient-to-br from-gray-900 to-blue-900;
+    }
+
+    .bg-seka-card {
+        @apply bg-gradient-to-br from-gray-800 to-gray-700;
+    }
+
+    .bg-seka-accent {
+        @apply bg-gradient-to-r from-purple-600 to-blue-600;
+    }
+
+    /* Тени */
+    .shadow-seka {
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+    }
+
+    .shadow-seka-lg {
+        box-shadow: 0 20px 50px -12px rgba(0, 0, 0, 0.7);
+    }
 }
 
-.slide-enter-from,
-.slide-leave-to {
-    transform: translateX(100%);
+/* Анимации для игровых элементов */
+@keyframes deal-card {
+    0% { transform: scale(0) rotate(-180deg); opacity: 0; }
+    100% { transform: scale(1) rotate(0deg); opacity: 1; }
+}
+
+.deal-card {
+    animation: deal-card 0.5s ease-out;
+}
+
+@keyframes chip-fall {
+    0% { transform: translateY(-100px) rotate(0deg); opacity: 0; }
+    100% { transform: translateY(0) rotate(360deg); opacity: 1; }
+}
+
+.chip-fall {
+    animation: chip-fall 0.6s ease-out;
+}
+
+/* Зеленая тема SEKA */
+@layer components {
+    /* Кнопки зеленой темы */
+    .btn-seka-green {
+        @apply btn-seka bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white shadow-lg;
+    }
+
+    .btn-seka-green-secondary {
+        @apply btn-seka bg-gray-700 hover:bg-gray-600 text-white border border-emerald-600;
+    }
+
+    /* Карточки зеленой темы */
+    .card-seka-green {
+        @apply bg-gray-800 rounded-2xl border border-emerald-500/30 p-6 transition-all duration-300 hover:border-emerald-400;
+    }
+
+    /* Бейджи зеленой темы */
+    .badge-seka-green {
+        @apply badge-seka bg-emerald-500 text-white;
+    }
+
+    .badge-seka-green-light {
+        @apply badge-seka bg-emerald-400/20 text-emerald-400 border border-emerald-400/30;
+    }
+
+    /* Аватары зеленой темы */
+    .avatar-seka-green {
+        @apply avatar-seka bg-gradient-to-br from-green-500 to-emerald-500;
+    }
+
+    /* Градиентный текст зеленой темы */
+    .text-gradient-green {
+        @apply bg-gradient-to-r from-green-400 to-emerald-400 bg-clip-text text-transparent;
+    }
+}
+
+@layer utilities {
+    .bg-seka-green-primary {
+        @apply bg-gradient-to-br from-gray-900 to-emerald-900;
+    }
+
+    .bg-seka-green-accent {
+        @apply bg-gradient-to-r from-green-600 to-emerald-600;
+    }
+}
+
+.avatar-seka-green-sm {
+  @apply avatar-seka-green w-8 h-8 text-xs;
+}
+
+.avatar-seka-green-lg {
+  @apply avatar-seka-green w-16 h-16 text-xl;
 }

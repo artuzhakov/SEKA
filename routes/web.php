@@ -21,12 +21,18 @@ use App\Http\Controllers\ProfileController;
 // 🎯 Public Routes
 Route::get('/', function () {
     return Inertia::render('Welcome', [
-        'canLogin' => Route::has('login'),
-        'canRegister' => Route::has('register'),
-        'laravelVersion' => Application::VERSION,
+        'canLogin' => true,
+        'canRegister' => true,
+        'auth' => [
+            'user' => auth()->user()
+        ],
+        'laravelVersion' => app()->version(),
         'phpVersion' => PHP_VERSION,
     ]);
-})->name('home');
+});
+
+// 🎯 Authentication routes are handled in auth.php
+require __DIR__ . '/auth.php';
 
 // 🎯 Public test routes
 Route::get('/pusher-test', function () {
@@ -48,46 +54,30 @@ Route::middleware(['auth', 'verified'])->group(function () {
     // 🎯 Dashboard
     Route::get('/dashboard', function () {
         $user = Auth::user();
-        $wallet = $user->wallet;
         return Inertia::render('Dashboard', [
-            'wallet' => $wallet,
             'user' => $user
         ]);
     })->name('dashboard');
 
     // 🎯 SEKA Game Routes
-    Route::get('/seka-lobby', function () {
+    Route::get('/lobby', function () {
         $user = Auth::user();
         return Inertia::render('SekaLobby', [
             'user' => $user
         ]);
     })->name('seka.lobby');
 
-    Route::get('/seka-game/{gameId}', function ($gameId) {
+    Route::get('/game/{id}', function ($id) {
         $user = Auth::user();
         
-        // Здесь можно добавить проверку доступа к игре
-        $hasAccess = true; // Заглушка - в реальности проверять через GameService
-        
-        if (!$hasAccess) {
-            abort(403, 'Access denied to this game');
-        }
-
         return Inertia::render('SekaGame', [
-            'gameId' => (int)$gameId,
+            'gameId' => (int)$id,
             'user' => $user
         ]);
-    })->name('seka.game');
+    })->name('game');
 
     // 🎯 Profile Management
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
-    Route::get('/profile/getOnlineStatus/{userId}', [ProfileController::class, 'getOnlineStatus'])->name('profile.getOnlineStatus');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
-    Route::post('/profile/updateOnlineStatus', [ProfileController::class, 'updateOnlineStatus'])->name('profile.updateOnlineStatus');
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
-
-    // 🎯 Game Management
-    Route::get('/game/{id}', [GameController::class, 'show'])->name('game.show');
 });
-
-require __DIR__ . '/auth.php';
