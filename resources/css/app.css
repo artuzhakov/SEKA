@@ -237,3 +237,29 @@
 .avatar-seka-green-lg {
   @apply avatar-seka-green w-16 h-16 text-xl;
 }
+
+/* Дополнения к resources/css/app.css */
+.game-room-card {
+  backdrop-filter: blur(10px);
+}
+
+/* Анимации для плавного появления */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.game-room-card {
+  animation: fadeInUp 0.6s ease-out;
+}
+
+.game-room-card:nth-child(1) { animation-delay: 0.1s; }
+.game-room-card:nth-child(2) { animation-delay: 0.2s; }
+.game-room-card:nth-child(3) { animation-delay: 0.3s; }
+.game-room-card:nth-child(4) { animation-delay: 0.4s; }
