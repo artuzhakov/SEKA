@@ -977,7 +977,7 @@ class GameController extends Controller
                 'current_bet' => $player->getCurrentBet(),
                 'is_playing' => $player->isPlaying(),
                 'is_playing_dark' => $player->getStatus() === \App\Domain\Game\Enums\PlayerStatus::DARK,
-                'has_folded' => $player->hasFolded(),
+                'has_folded' => $player->getStatus() === \App\Domain\Game\Enums\PlayerStatus::FOLDED,
                 'is_current_turn' => $player->getPosition() === $game->getCurrentPlayerPosition(),
                 'status' => $player->getStatus()->value,
                 'cards_count' => count($player->getCards())

@@ -14,7 +14,7 @@
 </template>
 
 <script setup>
-import { useNotifications } from '@/composables/useNotifications'
+import { useNotifications } from '@/components/seka/composables/useNotifications'
 
 const { notifications, removeNotification } = useNotifications()
 

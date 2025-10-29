@@ -1,14 +1,14 @@
 <template>
   <div class="debug-item">
-    <span class="debug-label">{{ label }}:</span>
-    <span class="debug-value">{{ value }}</span>
+    <span class="label">{{ label }}:</span>
+    <span class="value">{{ value }}</span>
   </div>
 </template>
 
 <script setup>
 defineProps({
   label: String,
-  value: [String, Number, Boolean]
+  value: [String, Number, Boolean, Array, Object]
 })
 </script>
 
@@ -16,17 +16,15 @@ defineProps({
 .debug-item {
   display: flex;
   justify-content: space-between;
-  padding: 5px;
-  background: rgba(255,255,255,0.1);
-  border-radius: 4px;
+  padding: 4px 0;
+  border-bottom: 1px solid #e2e8f0;
 }
-
-.debug-label {
-  color: #9ca3af;
-}
-
-.debug-value {
+.label {
   font-weight: bold;
-  color: white;
+  color: #4a5568;
+}
+.value {
+  color: #2d3748;
+  font-family: monospace;
 }
 </style>

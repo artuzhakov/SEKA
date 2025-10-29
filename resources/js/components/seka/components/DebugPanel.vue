@@ -58,6 +58,7 @@
 
 <script setup>
 import { ref } from 'vue'
+import DebugItem from './DebugItem.vue'
 
 const props = defineProps({
   gameStatus: String,

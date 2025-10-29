@@ -31,7 +31,7 @@
 </template>
 
 <script setup>
-import { useGameState } from '@/composables/useGameState'
+import { useGameState } from '@/components/seka/composables/useGameState'
 
 const { currentPlayerId } = useGameState()
 

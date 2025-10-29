@@ -9,7 +9,7 @@
         :action="action"
         :current-player-info="currentPlayerInfo"
         :current-max-bet="currentMaxBet"
-        @click="handleAction(action)"
+        @action-clicked="handleAction"
       />
     </div>
   </div>
@@ -36,6 +36,8 @@ const props = defineProps({
 const emit = defineEmits(['take-action', 'show-raise-modal'])
 
 const handleAction = (action) => {
+  console.log('🎯 ActionPanel: Handling action', action)
+  
   if (action === 'raise') {
     emit('show-raise-modal')
   } else {
@@ -46,10 +48,11 @@ const handleAction = (action) => {
 
 <style scoped>
 .action-panel {
-  background: white;
+  background: #1a202c;
   padding: 20px;
   border-radius: 10px;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  color: white;
 }
 
 .actions-grid {

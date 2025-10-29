@@ -6,7 +6,7 @@
 
 <script setup>
 import { defineProps } from 'vue'
-import SekaGame from '@/сomponents/seka/SekaGame.vue'
+import SekaGame from '@/components/seka/SekaGame.vue'
 
 const props = defineProps({
   gameId: Number,

@@ -27,7 +27,7 @@ export function useAuth() {
                 user.value = userResponse.data;
                 localStorage.setItem('user', JSON.stringify(user.value));
                 
-                router.visit('/dashboard');
+                // router.visit('/dashboard');
             }
         } catch (err) {
             error.value = err.response?.data?.message || 'Login failed';
@@ -50,7 +50,7 @@ export function useAuth() {
                 user.value = userResponse.data;
                 localStorage.setItem('user', JSON.stringify(user.value));
                 
-                router.visit('/dashboard');
+                // router.visit('/dashboard');
             }
         } catch (err) {
             error.value = err.response?.data?.message || 'Registration failed';

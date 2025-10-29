@@ -32,7 +32,7 @@
 
 <script setup>
 import { ref } from 'vue'
-import { useNotifications } from '@/composables/useNotifications'
+import { useNotifications } from '@/components/seka/composables/useNotifications'
 
 const { showNotification } = useNotifications()
 

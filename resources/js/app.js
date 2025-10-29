@@ -10,6 +10,7 @@ import axios from 'axios';
 // Настраиваем axios для работы с Sanctum
 axios.defaults.withCredentials = true;
 axios.defaults.withXSRFToken = true;
+axios.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest';
 
 // Функция для получения CSRF токена
 const getCsrfToken = async () => {
