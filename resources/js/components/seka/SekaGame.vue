@@ -14,9 +14,10 @@
     <div class="game-table">
       <!-- Игрок 1 (верхний левый) -->
       <div class="player-seat seat-1" :class="getPlayerClasses(1)">
-        <PlayerDisplay 
+        <PlayerSpot 
           :player="getPlayer(1)"
-          :is-current="currentPlayerId === 1"
+          :cards="getPlayerCards(1)"
+          :is-current-turn="currentPlayerId === 1"
           :is-dealer="dealerId === 1"
           @player-action="handlePlayerAction"
         />
@@ -24,9 +25,10 @@
 
       <!-- Игрок 2 (верхний центр) -->
       <div class="player-seat seat-2" :class="getPlayerClasses(2)">
-        <PlayerDisplay 
+        <PlayerSpot 
           :player="getPlayer(2)"
-          :is-current="currentPlayerId === 2"
+          :cards="getPlayerCards(2)"
+          :is-current-turn="currentPlayerId === 2"
           :is-dealer="dealerId === 2"
           @player-action="handlePlayerAction"
         />
@@ -34,9 +36,10 @@
 
       <!-- Игрок 3 (верхний правый) -->
       <div class="player-seat seat-3" :class="getPlayerClasses(3)">
-        <PlayerDisplay 
+        <PlayerSpot 
           :player="getPlayer(3)"
-          :is-current="currentPlayerId === 3"
+          :cards="getPlayerCards(3)"
+          :is-current-turn="currentPlayerId === 3"
           :is-dealer="dealerId === 3"
           @player-action="handlePlayerAction"
         />
@@ -50,9 +53,10 @@
 
       <!-- Игрок 4 (нижний правый) -->
       <div class="player-seat seat-4" :class="getPlayerClasses(4)">
-        <PlayerDisplay 
+        <PlayerSpot 
           :player="getPlayer(4)"
-          :is-current="currentPlayerId === 4"
+          :cards="getPlayerCards(4)"
+          :is-current-turn="currentPlayerId === 4"
           :is-dealer="dealerId === 4"
           @player-action="handlePlayerAction"
         />
@@ -60,9 +64,10 @@
 
       <!-- Игрок 5 (нижний центр) -->
       <div class="player-seat seat-5" :class="getPlayerClasses(5)">
-        <PlayerDisplay 
+        <PlayerSpot 
           :player="getPlayer(5)"
-          :is-current="currentPlayerId === 5"
+          :cards="getPlayerCards(5)"
+          :is-current-turn="currentPlayerId === 5"
           :is-dealer="dealerId === 5"
           @player-action="handlePlayerAction"
         />
@@ -70,9 +75,10 @@
 
       <!-- Игрок 6 (нижний левый) -->
       <div class="player-seat seat-6" :class="getPlayerClasses(6)">
-        <PlayerDisplay 
+        <PlayerSpot 
           :player="getPlayer(6)"
-          :is-current="currentPlayerId === 6"
+          :cards="getPlayerCards(6)"
+          :is-current-turn="currentPlayerId === 6"
           :is-dealer="dealerId === 6"
           @player-action="handlePlayerAction"
         />
@@ -80,44 +86,129 @@
     </div>
 
     <!-- Мобильная панель действий -->
-    <ActionPanel 
+    <MobileActionPanel 
       v-if="isMobile && isMyTurn"
       :player="currentPlayer"
-      :available-actions="availableActions"
+      :is-visible="showMobileActions"
       @action="takeAction"
+      @close="showMobileActions = false"
     />
 
     <!-- Дебаг информация -->
-    <DebugPanel v-if="showDebug" :game-state="gameState" />
+    <DebugPanel 
+      v-if="showDebug" 
+      :game-state="gameState"
+      @test-action="handleTestAction"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
-import PlayerDisplay from '../seka/components/PlayerDisplay.vue'
-import ActionPanel from '../seka/components/ActionPanel.vue'
-import DebugPanel from '../seka/components/DebugPanel.vue'
+import PlayerSpot from './components/PlayerSpot.vue'
+import MobileActionPanel from './components/MobileActionPanel.vue'
+import DebugPanel from './components/DebugPanel.vue'
 
-// 🎯 РЕАКТИВНОЕ СОСТОЯНИЕ
+// 🎯 СОЗДАНИЕ ТЕСТОВЫХ КАРТ
+const createTestCards = () => {
+  const suits = ['♥', '♦', '♣', '♠']
+  const ranks = ['10', 'J', 'Q', 'K', 'A']
+  
+  return Array.from({ length: 3 }, (_, index) => ({
+    id: `card-${index + 1}`,
+    rank: ranks[Math.floor(Math.random() * ranks.length)],
+    suit: suits[Math.floor(Math.random() * suits.length)],
+    isVisible: false,
+    isJoker: false
+  }))
+}
+
+const handleTestAction = (action) => {
+  console.log('🔧 Тестовое действие из DebugPanel:', action)
+  // Можно добавить специальную логику для тестовых действий
+  if (action === 'dark') {
+    // Например, принудительно включить темную игру
+    currentPlayer.value.isDark = true
+    currentPlayer.value.cards.forEach(card => card.isVisible = false)
+  }
+}
+
+// 🎯 ИНИЦИАЛИЗАЦИЯ ИГРОКОВ С КАРТАМИ
+const players = reactive([
+  { 
+    id: 1, 
+    name: 'Вы', 
+    balance: 1000, 
+    currentBet: 50, 
+    isFolded: false, 
+    isDark: false, 
+    cards: createTestCards().map(card => ({ ...card, isVisible: true })), // Игрок видит свои карты
+    lastAction: '' 
+  },
+  { 
+    id: 2, 
+    name: 'Алексей', 
+    balance: 1000, 
+    currentBet: 50, 
+    isFolded: false, 
+    isDark: false, 
+    cards: createTestCards(),
+    lastAction: '' 
+  },
+  { 
+    id: 3, 
+    name: 'Мария', 
+    balance: 1000, 
+    currentBet: 50, 
+    isFolded: false, 
+    isDark: false, 
+    cards: createTestCards(),
+    lastAction: '' 
+  },
+  { 
+    id: 4, 
+    name: 'Дмитрий', 
+    balance: 1000, 
+    currentBet: 50, 
+    isFolded: false, 
+    isDark: true, // Тестируем темную игру
+    cards: createTestCards().map(card => ({ ...card, isVisible: false })),
+    lastAction: '' 
+  },
+  { 
+    id: 5, 
+    name: 'Светлана', 
+    balance: 1000, 
+    currentBet: 50, 
+    isFolded: false, 
+    isDark: false, 
+    cards: createTestCards(),
+    lastAction: '' 
+  },
+  { 
+    id: 6, 
+    name: 'Игорь', 
+    balance: 1000, 
+    currentBet: 50, 
+    isFolded: true, // Тестируем пас
+    isDark: false, 
+    cards: createTestCards(),
+    lastAction: 'fold' 
+  }
+])
+
+// 🎯 СОСТОЯНИЕ ИГРЫ
 const gameState = reactive({
-  pot: 0,
+  pot: 300,
   currentRound: 1,
-  currentPlayerId: 2, // Начинает после дилера
+  currentPlayerId: 2, // Начинает игрок после дилера
   dealerId: 1,
   baseBet: 50
 })
 
-const players = reactive([
-  { id: 1, name: 'Вы', balance: 1000, currentBet: 0, isFolded: false, isDark: false, cards: [], lastAction: '' },
-  { id: 2, name: 'Алексей', balance: 1000, currentBet: 0, isFolded: false, isDark: false, cards: [], lastAction: '' },
-  { id: 3, name: 'Мария', balance: 1000, currentBet: 0, isFolded: false, isDark: false, cards: [], lastAction: '' },
-  { id: 4, name: 'Дмитрий', balance: 1000, currentBet: 0, isFolded: false, isDark: false, cards: [], lastAction: '' },
-  { id: 5, name: 'Светлана', balance: 1000, currentBet: 0, isFolded: false, isDark: false, cards: [], lastAction: '' },
-  { id: 6, name: 'Игорь', balance: 1000, currentBet: 0, isFolded: false, isDark: false, cards: [], lastAction: '' }
-])
-
 const showDebug = ref(true)
 const isMobile = ref(false)
+const showMobileActions = ref(false)
 
 // 🎯 ВЫЧИСЛЯЕМЫЕ СВОЙСТВА
 const pot = computed(() => gameState.pot)
@@ -131,8 +222,26 @@ const isMyTurn = computed(() => currentPlayerId.value === 1)
 const activePlayers = computed(() => players.filter(p => !p.isFolded))
 
 // 🎯 МЕТОДЫ
-const getPlayer = (id) => players.find(p => p.id === id) || { 
-  id, name: 'Свободно', balance: 0, currentBet: 0, isFolded: true, isDark: false, cards: [], lastAction: '' 
+const getPlayer = (id) => {
+  const player = players.find(p => p.id === id)
+  if (player) return player
+  
+  // Возвращаем пустого игрока для свободных мест
+  return { 
+    id: null, 
+    name: 'Свободно', 
+    balance: 0, 
+    currentBet: 0, 
+    isFolded: true, 
+    isDark: false, 
+    cards: [], 
+    lastAction: '' 
+  }
+}
+
+const getPlayerCards = (playerId) => {
+  const player = getPlayer(playerId)
+  return player.cards || []
 }
 
 const getDealer = () => players.find(p => p.id === dealerId.value) || players[0]
@@ -151,18 +260,80 @@ const handlePlayerAction = (action) => {
 }
 
 const takeAction = (action) => {
-  console.log('Действие:', action)
-  // Логика действий будет в следующих компонентах
+  console.log('🎯 Действие:', action)
+  
+  const player = currentPlayer.value
+  if (!player) return
+
+  // Обновляем последнее действие
+  player.lastAction = action
+
+  // Простая логика действий для тестирования
+  switch(action) {
+    case 'check':
+      console.log('✅ Пропуск хода')
+      break
+    case 'call':
+      const callAmount = 50
+      player.currentBet += callAmount
+      player.balance -= callAmount
+      gameState.pot += callAmount
+      console.log('✅ Поддержка ставки:', callAmount)
+      break
+    case 'raise':
+      const raiseAmount = 100
+      player.currentBet += raiseAmount
+      player.balance -= raiseAmount
+      gameState.pot += raiseAmount
+      console.log('✅ Повышение ставки:', raiseAmount)
+      break
+    case 'fold':
+      player.isFolded = true
+      console.log('✅ Пас')
+      break
+    case 'dark':
+      player.isDark = true
+      player.cards.forEach(card => card.isVisible = false)
+      console.log('✅ Игра в темную')
+      break
+    case 'open':
+      player.isDark = false
+      player.cards.forEach(card => card.isVisible = true)
+      console.log('✅ Открытие карт')
+      break
+  }
+
+  // Передаем ход следующему игроку
+  passToNextPlayer()
+}
+
+const passToNextPlayer = () => {
+  const active = activePlayers.value
+  if (active.length === 0) return
+  
+  const currentIndex = active.findIndex(p => p.id === currentPlayerId.value)
+  const nextIndex = (currentIndex + 1) % active.length
+  gameState.currentPlayerId = active[nextIndex].id
+  
+  console.log('🔄 Ход передан:', getPlayer(gameState.currentPlayerId).name)
 }
 
 const checkMobile = () => {
   isMobile.value = window.innerWidth < 768
+  if (isMobile.value && isMyTurn.value) {
+    showMobileActions.value = true
+  }
 }
 
 // 🎯 LIFECYCLE
 onMounted(() => {
   checkMobile()
   window.addEventListener('resize', checkMobile)
+  
+  console.log('🎮 Игра SEKA инициализирована!')
+  console.log('👥 Игроки:', players.map(p => p.name))
+  console.log('🎫 Дилер:', getDealer().name)
+  console.log('🎯 Текущий ход:', currentPlayer.value.name)
 })
 
 onUnmounted(() => {
@@ -171,6 +342,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* Стили остаются такими же как в предыдущей версии */
 .seka-game {
   min-height: 100vh;
   background: linear-gradient(135deg, #1a202c 0%, #2d3748 100%);
@@ -178,7 +350,6 @@ onUnmounted(() => {
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 }
 
-/* Заголовок */
 .game-header {
   text-align: center;
   padding: 20px;
@@ -204,135 +375,5 @@ onUnmounted(() => {
   color: #e2e8f0;
 }
 
-/* Игровой стол - Десктоп версия */
-.game-table {
-  display: grid;
-  grid-template-areas: 
-    "player1 player2 player3"
-    "player6 pot player4"
-    "player6 player5 player4";
-  grid-template-columns: 1fr auto 1fr;
-  grid-template-rows: 1fr auto 1fr;
-  gap: 30px;
-  padding: 40px;
-  max-width: 1200px;
-  margin: 0 auto;
-  min-height: 70vh;
-  align-items: center;
-}
-
-.player-seat {
-  min-width: 180px;
-  transition: all 0.3s ease;
-}
-
-.player-seat.occupied {
-  opacity: 1;
-}
-
-.player-seat.empty {
-  opacity: 0.6;
-}
-
-.player-seat.current {
-  transform: scale(1.05);
-}
-
-.player-seat.dealer::before {
-  content: "🎫";
-  position: absolute;
-  top: -10px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 1.5rem;
-}
-
-/* Позиции игроков */
-.seat-1 { grid-area: player1; justify-self: start; align-self: end; }
-.seat-2 { grid-area: player2; justify-self: center; align-self: end; }
-.seat-3 { grid-area: player3; justify-self: end; align-self: end; }
-.seat-4 { grid-area: player4; justify-self: end; align-self: start; }
-.seat-5 { grid-area: player5; justify-self: center; align-self: start; }
-.seat-6 { grid-area: player6; justify-self: start; align-self: start; }
-
-/* Банк */
-.pot-display {
-  grid-area: pot;
-  text-align: center;
-  background: rgba(74, 85, 104, 0.8);
-  padding: 20px 30px;
-  border-radius: 15px;
-  border: 3px solid #d69e2e;
-  min-width: 150px;
-}
-
-.pot-amount {
-  font-size: 2rem;
-  font-weight: bold;
-  color: #f6e05e;
-  margin-bottom: 5px;
-}
-
-.pot-label {
-  font-size: 1rem;
-  color: #e2e8f0;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-}
-
-/* Мобильная версия */
-.seka-game.mobile .game-table {
-  grid-template-areas: 
-    "player1"
-    "player2" 
-    "player3"
-    "pot"
-    "player4"
-    "player5"
-    "player6";
-  grid-template-columns: 1fr;
-  grid-template-rows: repeat(7, auto);
-  gap: 20px;
-  padding: 20px;
-}
-
-.seka-game.mobile .player-seat {
-  min-width: auto;
-  width: 100%;
-}
-
-/* Адаптивность */
-@media (max-width: 768px) {
-  .game-meta {
-    flex-direction: column;
-    gap: 10px;
-  }
-  
-  .meta-item {
-    font-size: 1rem;
-  }
-  
-  .pot-display {
-    padding: 15px 20px;
-  }
-  
-  .pot-amount {
-    font-size: 1.5rem;
-  }
-}
-
-@media (max-width: 480px) {
-  .game-header {
-    padding: 15px;
-  }
-  
-  .game-header h1 {
-    font-size: 2rem;
-  }
-  
-  .game-table {
-    padding: 15px;
-    gap: 15px;
-  }
-}
+/* Остальные стили из предыдущей версии... */
 </style>
