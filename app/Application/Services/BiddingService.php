@@ -354,7 +354,6 @@ class BiddingService
         \Log::info("💾 Game saved after player action");
     }
 
-    // ОСТАЛЬНЫЕ МЕТОДЫ БЕЗ ИЗМЕНЕНИЙ - они уже есть в твоем файле
     /**
      * 🎯 Проверить завершение раунда торгов
      */
