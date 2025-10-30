@@ -297,3 +297,7 @@
   color: #e2e8f0 !important;
   background: #2d3748 !important;
 }
+
+button, input, optgroup, select, textarea {
+    color: black;
+}
