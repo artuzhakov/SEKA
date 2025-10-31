@@ -1,495 +1,823 @@
 <template>
-  <div class="game-table" :class="{ 'mobile': isMobile }">
-    <!-- Заголовок стола -->
-    <div class="table-header">
-      <h2>🎴 SEKA</h2>
-      <div class="table-stats">
-        <span class="bank">🏦 Банк: {{ bank }}</span>
-        <span class="round">Раунд: {{ currentRound }}/3</span>
-        <span class="dealer">🎫 Дилер: {{ dealerName }}</span>
+  <div class="game-table" :class="{ 'mobile': isMobile, 'desktop': !isMobile }">
+    <!-- Десктопная версия -->
+    <div v-if="!isMobile" class="desktop-table">
+      <div class="poker-table-container">
+        <div class="poker-table">
+          <div class="table-outer-ring"></div>
+          <div class="table-inner-surface">
+            
+            <!-- Центр стола -->
+            <div class="table-center">
+              <div class="bank-display">
+                <div class="bank-icon">💰</div>
+                <div class="bank-amount">{{ bank }}</div>
+                <div class="bank-label">БАНК</div>
+              </div>
+
+              <!-- Колода карт -->
+              <div class="deck-display" v-if="gameStatus === 'active'">
+                <div class="deck-cards">
+                  <div class="card-back" v-for="n in 3" :key="n" 
+                      :style="{ transform: `translate(${n * 2}px, ${n * 1}px)` }"></div>
+                </div>
+                <div class="deck-count">36</div>
+              </div>
+            </div>
+
+            <!-- Игроки вокруг стола -->
+            <div v-for="position in 6" :key="position" 
+                 class="player-position" 
+                 :class="[`pos-${position}`, getPositionClass(position)]">
+              <CompactPlayerSlot 
+                :player="getPlayer(position)"
+                :cards="getPlayerCards(position)"
+                :is-current-turn="isCurrentTurn(position)"
+                :is-dealer="isDealer(position)"
+                :show-ready="gameStatus === 'waiting'"
+                @player-action="handlePlayerAction"
+                @player-ready="() => $emit('player-ready', getPlayer(position)?.id)"
+              />
+            </div>
+
+          </div>
+        </div>
       </div>
     </div>
 
-    <!-- Игровой стол с фиксированными позициями -->
-    <div class="poker-table">
-      <!-- Овальный стол -->
-      <div class="table-surface">
-        <div class="pot-display">
-          <div class="pot-amount">{{ bank }} 🪙</div>
-          <div class="pot-label">БАНК</div>
+    <!-- Мобильная версия -->
+    <div v-else class="mobile-table">
+      <!-- Верхняя панель -->
+      <div class="mobile-header">
+        <div class="mobile-title">
+          <h1>🎴 SEKA</h1>
+          <div class="mobile-status" :class="gameStatus">
+            {{ getGameStatusText() }}
+          </div>
         </div>
-        
-        <!-- Колода для анимаций -->
-        <div class="deck-spot" v-if="showDeck">
-          <div class="deck" @click="dealCards" title="Раздать карты">
-            🃏
+        <div class="mobile-game-info">
+          <div class="info-item">
+            <span class="label">Банк:</span>
+            <span class="value">{{ bank }}🪙</span>
+          </div>
+          <div class="info-item">
+            <span class="label">Раунд:</span>
+            <span class="value">{{ currentRound }}/3</span>
           </div>
         </div>
       </div>
 
-      <!-- Фиксированные позиции игроков -->
-      <div class="player-positions">
-        <!-- Позиция 1: Верхний левый -->
-        <div class="player-position pos-1" :class="getPositionClass(1)">
-          <PlayerSpot 
-            :player="getPlayer(1)"
-            :cards="playerCards[1]"
-            :is-current-turn="currentPlayerPosition === getPlayerPosition(1)"
-            :is-dealer="dealerPosition === 1"
-            @player-action="handlePlayerAction"
-          />
+      <!-- Игровой стол -->
+      <div class="mobile-players-ring">
+        
+        <!-- Игроки по кругу -->
+        <div v-for="position in 6" :key="position" 
+             class="mobile-player-spot" 
+             :class="[`spot-${position}`, getMobilePositionClass(position)]">
+          <div class="mobile-player-avatar">
+            {{ getPlayerInitials(position) }}
+            <div v-if="isDealer(position)" class="dealer-indicator">🎫</div>
+            <div v-if="isCurrentTurn(position) && gameStatus === 'active'" 
+                class="turn-indicator">🎯</div>
+          </div>
+          <div class="mobile-player-info" v-if="position === 1 || position === 5">
+            <div class="player-name">{{ getPlayer(position).name }}</div>
+            <div class="player-balance">{{ getPlayer(position).balance }}🪙</div>
+          </div>
         </div>
 
-        <!-- Позиция 2: Верхний центр -->
-        <div class="player-position pos-2" :class="getPositionClass(2)">
-          <PlayerSpot 
-            :player="getPlayer(2)"
-            :cards="playerCards[2]"
-            :is-current-turn="currentPlayerPosition === getPlayerPosition(2)"
-            :is-dealer="dealerPosition === 2"
-            @player-action="handlePlayerAction"
-          />
+        <!-- Центр стола -->
+        <div class="mobile-table-center">
+          <div class="mobile-bank">
+            <div class="bank-icon">💰</div>
+            <div class="bank-amount">{{ bank }}</div>
+            <div class="bank-label">БАНК</div>
+          </div>
+          
+          <div class="mobile-deck" v-if="gameStatus === 'active'">
+            <div class="deck-stack">
+              <div class="card-back"></div>
+              <div class="card-back"></div>
+            </div>
+            <div class="deck-count">36</div>
+          </div>
         </div>
 
-        <!-- Позиция 3: Верхний правый -->
-        <div class="player-position pos-3" :class="getPositionClass(3)">
-          <PlayerSpot 
-            :player="getPlayer(3)"
-            :cards="playerCards[3]"
-            :is-current-turn="currentPlayerPosition === getPlayerPosition(3)"
-            :is-dealer="dealerPosition === 3"
-            @player-action="handlePlayerAction"
-          />
+      </div>
+
+      <!-- Нижняя панель действий -->
+      <div class="mobile-action-panel">
+        
+        <!-- Карты текущего игрока -->
+        <div class="player-cards-section" v-if="gameStatus === 'active' && getPlayer(1).id">
+          <div class="section-title">Ваши карты:</div>
+          <div class="mobile-cards-container">
+            <div v-for="(card, index) in getPlayerCards(1)" :key="index" 
+                class="mobile-card">
+              <div class="card-front" v-if="card.isVisible">
+                <div class="card-rank">{{ card.rank }}</div>
+                <div class="card-suit">{{ card.suit }}</div>
+              </div>
+              <div v-else class="card-back-mobile"></div>
+            </div>
+          </div>
         </div>
 
-        <!-- Позиция 4: Нижний правый -->
-        <div class="player-position pos-4" :class="getPositionClass(4)">
-          <PlayerSpot 
-            :player="getPlayer(4)"
-            :cards="playerCards[4]"
-            :is-current-turn="currentPlayerPosition === getPlayerPosition(4)"
-            :is-dealer="dealerPosition === 4"
-            @player-action="handlePlayerAction"
-          />
+        <!-- Кнопки действий -->
+        <div class="actions-section" v-if="isMyTurn && gameStatus === 'active'">
+          <div class="section-title">Ваш ход:</div>
+          <div class="mobile-actions-grid">
+            <button v-for="action in getAvailableActions()" 
+                    :key="action"
+                    class="mobile-action-btn"
+                    :class="action"
+                    @click="handleAction(action)">
+              <span class="action-icon">{{ getActionIcon(action) }}</span>
+              <span class="action-text">{{ getActionText(action) }}</span>
+            </button>
+          </div>
         </div>
 
-        <!-- Позиция 5: Нижний центр -->
-        <div class="player-position pos-5" :class="getPositionClass(5)">
-          <PlayerSpot 
-            :player="getPlayer(5)"
-            :cards="playerCards[5]"
-            :is-current-turn="currentPlayerPosition === getPlayerPosition(5)"
-            :is-dealer="dealerPosition === 5"
-            @player-action="handlePlayerAction"
-          />
+        <!-- Информация о ходе -->
+        <div class="turn-info" v-else-if="gameStatus === 'active'">
+          <div class="current-turn">
+            <div class="turn-label">Сейчас ходит:</div>
+            <div class="current-player">
+              {{ getCurrentPlayer().name }}
+              <span class="turn-badge">🎯</span>
+            </div>
+          </div>
         </div>
 
-        <!-- Позиция 6: Нижний левый -->
-        <div class="player-position pos-6" :class="getPositionClass(6)">
-          <PlayerSpot 
-            :player="getPlayer(6)"
-            :cards="playerCards[6]"
-            :is-current-turn="currentPlayerPosition === getPlayerPosition(6)"
-            :is-dealer="dealerPosition === 6"
-            @player-action="handlePlayerAction"
-          />
-        </div>
       </div>
     </div>
-
-    <!-- Мобильная панель действий -->
-    <MobileActionPanel 
-      v-if="isMobile && isMyTurn"
-      :player="currentPlayer"
-      @action="handleGlobalAction"
-    />
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import PlayerSpot from './PlayerSpot.vue'
-import MobileActionPanel from './MobileActionPanel.vue'
+import { computed } from 'vue'
+import CompactPlayerSlot from './CompactPlayerSlot.vue'
 
 const props = defineProps({
-  players: {
-    type: Array,
-    default: () => []
-  },
-  playerCards: {
-    type: Object,
-    default: () => ({})
-  },
-  currentPlayerPosition: {
-    type: Number,
-    default: 0
-  },
-  bank: {
-    type: Number,
-    default: 0
-  },
-  currentRound: {
-    type: Number,
-    default: 1
-  },
-  gameStatus: {
-    type: String,
-    default: 'waiting'
-  },
-  dealerPosition: {
-    type: Number,
-    default: 1
-  }
+  players: Array,
+  playerCards: Object,
+  currentPlayerId: Number,
+  bank: Number,
+  currentRound: Number,
+  gameStatus: String,
+  dealerId: Number,
+  isMobile: Boolean
 })
 
-const emit = defineEmits(['deal-cards', 'player-action'])
-
-// 🎯 РЕАКТИВНОЕ СОСТОЯНИЕ
-const isMobile = ref(false)
-const showDeck = ref(true)
+const emit = defineEmits(['player-action', 'player-ready', 'deal-cards'])
 
 // 🎯 ВЫЧИСЛЯЕМЫЕ СВОЙСТВА
-const dealerName = computed(() => {
-  const dealer = props.players.find(p => p.position === props.dealerPosition)
-  return dealer?.name || 'Нет дилера'
-})
-
-const currentPlayer = computed(() => {
-  return props.players.find(p => p.position === props.currentPlayerPosition)
-})
-
-const isMyTurn = computed(() => {
-  return currentPlayer.value?.id === 1 // Предполагаем что ID 1 - это текущий пользователь
-})
+const isMyTurn = computed(() => props.currentPlayerId === 1)
 
 // 🎯 МЕТОДЫ
 const getPlayer = (position) => {
-  return props.players.find(p => p.position === position) || {
-    id: null,
-    name: 'Свободно',
-    position: position,
-    balance: 0,
-    currentBet: 0,
-    isFolded: true,
-    isDark: false,
-    lastAction: ''
+  const player = props.players.find(p => p.position === position)
+  return player || { 
+    id: null, 
+    name: 'Свободно', 
+    balance: 0, 
+    position: position
   }
 }
 
-const getPlayerPosition = (seatNumber) => {
-  return seatNumber // Позиция соответствует номеру места
+const getPlayerCards = (position) => {
+  const player = getPlayer(position)
+  return props.playerCards[player.id] || []
+}
+
+const getCurrentPlayer = () => getPlayer(props.players.findIndex(p => p.id === props.currentPlayerId) + 1)
+
+const isCurrentTurn = (position) => {
+  const player = getPlayer(position)
+  return player.id === props.currentPlayerId
+}
+
+const isDealer = (position) => {
+  const player = getPlayer(position)
+  return player.id === props.dealerId
 }
 
 const getPositionClass = (position) => ({
   'occupied': getPlayer(position).name !== 'Свободно',
   'empty': getPlayer(position).name === 'Свободно',
-  'current': props.currentPlayerPosition === position,
-  'dealer': props.dealerPosition === position
+  'current': isCurrentTurn(position),
+  'dealer': isDealer(position)
 })
 
-const handlePlayerAction = (action) => {
-  emit('player-action', action)
+const getMobilePositionClass = (position) => ({
+  'occupied': getPlayer(position).name !== 'Свободно',
+  'empty': getPlayer(position).name === 'Свободно',
+  'current': isCurrentTurn(position),
+  'dealer': isDealer(position)
+})
+
+const getPlayerInitials = (position) => {
+  const player = getPlayer(position)
+  if (player.name === 'Свободно') return '+'
+  return player.name.charAt(0)
 }
 
-const handleGlobalAction = (action) => {
+const getGameStatusText = () => {
+  switch(props.gameStatus) {
+    case 'waiting': return '⏳ Ожидание'
+    case 'active': return '🎯 Игра идет'
+    default: return '❓ Неизвестно'
+  }
+}
+
+const getAvailableActions = () => {
+  if (!isMyTurn.value) return []
+  return ['check', 'call', 'raise', 'fold', 'dark']
+}
+
+const getActionText = (action) => {
+  const actions = {
+    'check': 'Пропуск',
+    'call': 'Поддержать', 
+    'raise': 'Повысить',
+    'fold': 'Пас',
+    'dark': 'Темная'
+  }
+  return actions[action] || action
+}
+
+const getActionIcon = (action) => {
+  const icons = {
+    'check': '➡️',
+    'call': '✅', 
+    'raise': '📈',
+    'fold': '🏳️',
+    'dark': '🕶️'
+  }
+  return icons[action] || '🎯'
+}
+
+const handleAction = (action) => {
   if (isMyTurn.value) {
     emit('player-action', action)
   }
 }
 
-const dealCards = () => {
-  if (props.gameStatus === 'waiting') {
-    emit('deal-cards')
-    showDeck.value = false
-  }
+const handlePlayerAction = (action) => {
+  emit('player-action', action)
 }
-
-const checkMobile = () => {
-  isMobile.value = window.innerWidth < 768
-}
-
-// 🎯 LIFECYCLE
-onMounted(() => {
-  checkMobile()
-  window.addEventListener('resize', checkMobile)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('resize', checkMobile)
-})
 </script>
 
 <style scoped>
-.game-table {
-  background: linear-gradient(135deg, #1a202c 0%, #2d3748 100%);
-  color: white;
-  min-height: 100vh;
-  padding: 20px;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+/* 🎴 ДЕСКТОПНАЯ ВЕРСИЯ */
+.desktop-table {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
 }
 
-/* Заголовок */
-.table-header {
-  text-align: center;
-  margin-bottom: 30px;
-  padding: 20px;
-  background: rgba(45, 55, 72, 0.8);
-  border-radius: 10px;
-  border: 1px solid #4a5568;
+.poker-table-container {
+  position: relative;
+  width: 100%;
+  height: 70vh;
+  min-height: 600px;
 }
 
-.table-header h2 {
-  margin: 0 0 15px 0;
-  font-size: 2.5rem;
-  color: #68d391;
-}
-
-.table-stats {
-  display: flex;
-  justify-content: center;
-  gap: 30px;
-  flex-wrap: wrap;
-  font-size: 1.1rem;
-}
-
-.table-stats span {
-  padding: 8px 16px;
-  background: rgba(74, 85, 104, 0.6);
-  border-radius: 8px;
-  border: 1px solid #718096;
-}
-
-/* Игровой стол */
 .poker-table {
   position: relative;
-  max-width: 1000px;
-  height: 600px;
-  margin: 0 auto;
-  background: #2d5016;
-  border-radius: 50%;
-  border: 15px solid #8b4513;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(145deg, #1a5a1a, #0f3d0f);
+  border-radius: 46%;
+  border: 20px solid #8B4513;
   box-shadow: 
-    0 0 50px rgba(0, 0, 0, 0.5),
-    inset 0 0 50px rgba(0, 0, 0, 0.3);
+    0 0 0 15px #654321,
+    inset 0 0 80px rgba(0, 0, 0, 0.8),
+    0 20px 40px rgba(0, 0, 0, 0.6);
 }
 
-.table-surface {
+.table-outer-ring {
+  position: absolute;
+  top: -30px;
+  left: -30px;
+  right: -30px;
+  bottom: -30px;
+  border: 8px solid #5D4037;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.table-inner-surface {
+  position: absolute;
+  top: 60px;
+  left: 60px;
+  right: 60px;
+  bottom: 60px;
+  background: linear-gradient(145deg, #2d7a2d, #1a5a1a);
+  border-radius: 50%;
+  box-shadow: inset 0 0 50px rgba(0, 0, 0, 0.5);
+}
+
+/* Центр стола */
+.table-center {
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 200px;
-  height: 120px;
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  z-index: 5;
+}
+
+.bank-display {
+  display: flex;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.9);
+  border: 4px solid #fbbf24;
+  border-radius: 20px;
+  padding: 15px 20px;
+  text-align: center;
+  min-width: 100px;
+  box-shadow: 0 0 30px rgba(251, 191, 36, 0.4);
+}
+
+.bank-icon { 
+  font-size: 2rem; 
+  margin-bottom: 8px; 
+  margin-right: 4px;
+}
+
+.bank-amount { 
+  font-size: 1.5rem; 
+  font-weight: bold; 
+  color: #fbbf24; 
+  margin-bottom: 5px;
+  margin-right: 4px;
+}
+
+.bank-label { 
+  font-size: 0.8rem; 
+  color: #d1d5db; 
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+}
+
+.deck-display {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+}
+
+.deck-cards {
+  position: relative;
+  height: 60px;
+  width: 48px;
+}
+
+.card-back {
+  position: absolute;
+  width: 40px;
+  height: 56px;
+  background: linear-gradient(45deg, #1e40af, #3b82f6);
+  border: 2px solid #fff;
+  border-radius: 6px;
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.3);
+}
+
+.deck-count {
+  font-size: 0.8rem;
+  color: #9ca3af;
+  background: rgba(0, 0, 0, 0.7);
+  padding: 4px 12px;
+  border-radius: 12px;
+}
+
+/* Расположение игроков */
+.player-position {
+  position: absolute;
+  z-index: 10;
+  width: 140px;
+  transition: all 0.3s ease;
+}
+
+.pos-1 { top: -15%; left: 50%; transform: translateX(-50%); }
+.pos-2 { top: -5%; right: 10%; }
+.pos-3 { bottom: -20%; right: 10%; transform: translateY(-50%); }
+.pos-4 { bottom: -10%; left: 50%; transform: translateX(-50%); }
+.pos-5 { bottom: -20%; left: 10%; transform: translateY(-50%); }
+.pos-6 { top: -5%; left: 10%; }
+
+.player-position.occupied { opacity: 1; }
+.player-position.empty { opacity: 0.3; }
+.player-position.current { transform: scale(1.15); z-index: 20; }
+.player-position.current.pos-1,
+.player-position.current.pos-5 { 
+  transform: translateX(-50%) scale(1.15); 
+}
+
+/* 🎴 МОБИЛЬНАЯ ВЕРСИЯ */
+.mobile-table {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(135deg, #0a2f0a 0%, #1a5a1a 100%);
+}
+
+/* Верхняя панель */
+.mobile-header {
+  background: rgba(0, 0, 0, 0.9);
+  padding: 15px;
+  border-bottom: 3px solid #16a34a;
+  color: white;
+}
+
+.mobile-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.mobile-title h1 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+.mobile-status {
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 0.7rem;
+  font-weight: bold;
+}
+
+.mobile-status.waiting {
+  background: rgba(246, 224, 94, 0.2);
+  color: #f6e05e;
+  border: 1px solid #f6e05e;
+}
+
+.mobile-status.active {
+  background: rgba(104, 211, 145, 0.2);
+  color: #68d391;
+  border: 1px solid #68d391;
+}
+
+.mobile-game-info {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.info-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+}
+
+.info-item .label {
+  font-size: 0.7rem;
+  color: #9ca3af;
+  margin-bottom: 2px;
+}
+
+.info-item .value {
+  font-size: 0.9rem;
+  font-weight: bold;
+  color: white;
+}
+
+/* Игровой стол */
+.mobile-players-ring {
+  flex: 1;
+  position: relative;
+  width: 100%;
+  height: 370px;
+  max-width: 400px;
+  margin: 0 auto;
+  border-radius: 46%;
+  background: linear-gradient(145deg, #1a5a1a, #0f3d0f);
+  border: 8px solid #8B4513;
+  box-shadow: 0 0 0 15px #654321, inset 0 0 80px rgba(0, 0, 0, 0.8), 0 20px 40px rgba(0, 0, 0, 0.6);
+}
+
+/* Позиции игроков */
+.mobile-player-spot {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 10;
+  transition: all 0.3s ease;
+}
+
+.mobile-player-avatar {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: bold;
+  font-size: 1rem;
+  border: 3px solid #374151;
+  position: relative;
+}
+
+.mobile-player-spot.current .mobile-player-avatar {
+  border-color: #fbbf24;
+  box-shadow: 0 0 15px rgba(251, 191, 36, 0.5);
+}
+
+.dealer-indicator,
+.turn-indicator {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  font-size: 0.8rem;
+  background: rgba(0, 0, 0, 0.8);
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.turn-indicator {
+  top: -5px;
+  left: -5px;
+  background: rgba(251, 191, 36, 0.9);
+}
+
+.mobile-player-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.player-name {
+  font-size: 0.8rem;
+  font-weight: bold;
+  color: white;
+}
+
+.player-balance {
+  font-size: 0.7rem;
+  color: #fbbf24;
+}
+
+/* Расположение позиций */
+.spot-1 { top: 5%; left: 50%; transform: translateX(-50%); flex-direction: column; text-align: center; }
+.spot-2 { top: 20%; right: 5%; }
+.spot-3 { bottom: 25%; right: 5%; }
+.spot-4 { bottom: 5%; left: 50%; transform: translateX(-50%); flex-direction: column; text-align: center; }
+.spot-5 { bottom: 25%; left: 5%; }
+.spot-6 { top: 20%; left: 5%; }
+
+/* Центр стола */
+.mobile-table-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mobile-bank {
+  background: rgba(0, 0, 0, 0.9);
+  border: 3px solid #fbbf24;
+  border-radius: 15px;
+  padding: 10px 15px;
+  text-align: center;
+  min-width: 80px;
+}
+
+.bank-icon { font-size: 1.2rem; margin-bottom: 5px; }
+.bank-amount { 
+  font-size: 1.1rem; 
+  font-weight: bold; 
+  color: #fbbf24; 
+  margin-bottom: 2px;
+  margin-right: 8px;
+}
+.bank-label { 
+  font-size: 0.6rem; 
+  color: #d1d5db; 
+  text-transform: uppercase;
+}
+
+.mobile-deck {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+
+.deck-stack {
+  position: relative;
+  height: 40px;
+}
+
+.deck-stack .card-back {
+  position: absolute;
+  width: 30px;
+  height: 42px;
+  background: linear-gradient(45deg, #1e40af, #3b82f6);
+  border: 2px solid #fff;
+  border-radius: 4px;
+}
+
+.deck-stack .card-back:nth-child(2) {
+  transform: translate(3px, 3px);
+}
+
+.deck-count {
+  font-size: 0.6rem;
+  color: #9ca3af;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 2px 6px;
+  border-radius: 8px;
+}
+
+/* Нижняя панель действий */
+.mobile-action-panel {
+  background: rgba(0, 0, 0, 0.95);
+  border-top: 3px solid #16a34a;
+  padding: 15px;
+}
+
+/* Карты игрока */
+.player-cards-section {
+  margin-bottom: 15px;
+}
+
+.section-title {
+  color: #d1d5db;
+  font-size: 0.9rem;
+  margin-bottom: 8px;
+  font-weight: bold;
+}
+
+.mobile-cards-container {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 10px;
+}
+
+.mobile-card {
+  width: 60px;
+  height: 84px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.mobile-card .card-front {
+  width: 100%;
+  height: 100%;
+  background: white;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-}
-
-/* Банк */
-.pot-display {
-  text-align: center;
-  background: rgba(214, 158, 46, 0.9);
-  padding: 12px 20px;
-  border-radius: 10px;
-  border: 2px solid #f6e05e;
-  min-width: 120px;
-}
-
-.pot-amount {
-  font-size: 1.5rem;
   font-weight: bold;
-  color: #1a202c;
+}
+
+.card-rank {
+  font-size: 1.2rem;
   margin-bottom: 2px;
 }
 
-.pot-label {
-  font-size: 0.8rem;
-  color: #1a202c;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  font-weight: bold;
+.card-suit {
+  font-size: 1.5rem;
 }
 
-/* Колода */
-.deck-spot {
-  position: absolute;
-  top: -40px;
-  left: 50%;
-  transform: translateX(-50%);
-}
-
-.deck {
-  width: 60px;
-  height: 80px;
-  background: linear-gradient(45deg, #1a202c, #4a5568);
-  border: 2px solid #e2e8f0;
-  border-radius: 8px;
+.card-back-mobile {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(45deg, #1e40af, #3b82f6);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 2rem;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
-}
-
-.deck:hover {
-  transform: translateY(-5px);
-  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.4);
-}
-
-/* Позиции игроков */
-.player-positions {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-}
-
-.player-position {
-  position: absolute;
-  transition: all 0.3s ease;
-  min-width: 180px;
-}
-
-.player-position.occupied {
-  opacity: 1;
-}
-
-.player-position.empty {
-  opacity: 0.4;
-}
-
-.player-position.empty::before {
-  content: "+";
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  font-size: 3rem;
-  color: #718096;
-  z-index: 1;
-}
-
-.player-position.current {
-  transform: scale(1.1);
-  z-index: 10;
-}
-
-.player-position.dealer::after {
-  content: "🎫";
-  position: absolute;
-  top: -10px;
-  left: 50%;
-  transform: translateX(-50%);
+  color: white;
   font-size: 1.5rem;
-  z-index: 5;
 }
 
-/* Фиксированные позиции вокруг овала */
-.pos-1 { /* Верхний левый */
-  top: 10%;
-  left: 10%;
-  transform: translate(-50%, 0);
+/* Кнопки действий */
+.actions-section {
+  margin-bottom: 15px;
 }
 
-.pos-2 { /* Верхний центр */
-  top: 5%;
-  left: 50%;
-  transform: translate(-50%, 0);
-}
-
-.pos-3 { /* Верхний правый */
-  top: 10%;
-  right: 10%;
-  transform: translate(50%, 0);
-}
-
-.pos-4 { /* Нижний правый */
-  bottom: 10%;
-  right: 10%;
-  transform: translate(50%, 0);
-}
-
-.pos-5 { /* Нижний центр */
-  bottom: 5%;
-  left: 50%;
-  transform: translate(-50%, 0);
-}
-
-.pos-6 { /* Нижний левый */
-  bottom: 10%;
-  left: 10%;
-  transform: translate(-50%, 0);
-}
-
-/* Мобильная версия */
-.game-table.mobile .poker-table {
-  height: auto;
-  border-radius: 20px;
-  min-height: 500px;
-  background: #2d5016;
-}
-
-.game-table.mobile .player-positions {
-  position: static;
+.mobile-actions-grid {
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 15px;
-  padding: 20px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
 }
 
-.game-table.mobile .player-position {
-  position: static;
-  transform: none !important;
-  min-width: auto;
+.mobile-action-btn {
+  background: #3b82f6;
+  color: white;
+  border: none;
+  padding: 12px 8px;
+  border-radius: 10px;
+  font-size: 0.8rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-height: 50px;
 }
 
-.game-table.mobile .table-surface {
-  position: static;
-  transform: none;
-  margin: 20px auto;
+.mobile-action-btn:active {
+  transform: scale(0.95);
+}
+
+.mobile-action-btn.fold { background: #ef4444; }
+.mobile-action-btn.dark { background: #8b5cf6; }
+.mobile-action-btn.raise { background: #f59e0b; }
+.mobile-action-btn.check { background: #6b7280; }
+.mobile-action-btn.call { background: #10b981; }
+
+.action-icon {
+  font-size: 1rem;
+}
+
+.action-text {
+  font-size: 0.7rem;
+}
+
+/* Информация о ходе */
+.turn-info {
+  background: rgba(59, 130, 246, 0.1);
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid #3b82f6;
+}
+
+.current-turn {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.turn-label {
+  color: #9ca3af;
+  font-size: 0.8rem;
+}
+
+.current-player {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: white;
+  font-weight: bold;
+  font-size: 0.9rem;
+}
+
+/* Анимации */
+@keyframes pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.1); }
 }
 
 /* Адаптивность */
-@media (max-width: 768px) {
-  .game-table {
-    padding: 10px;
+@media (max-width: 1024px) {
+  .poker-table-container {
+    height: 60vh;
+    min-height: 500px;
   }
   
-  .table-header {
-    padding: 15px;
-  }
-  
-  .table-header h2 {
-    font-size: 2rem;
-  }
-  
-  .table-stats {
-    flex-direction: column;
-    gap: 10px;
-  }
-  
-  .poker-table {
-    border-width: 8px;
+  .player-position {
+    width: 120px;
   }
 }
 
-@media (max-width: 480px) {
-  .table-stats span {
-    font-size: 1rem;
-    padding: 6px 12px;
+@media (max-height: 700px) {
+  .mobile-player-avatar {
+    width: 40px;
+    height: 40px;
+    font-size: 0.8rem;
   }
   
-  .pot-display {
-    padding: 10px 15px;
+  .mobile-card {
+    width: 50px;
+    height: 70px;
   }
   
-  .pot-amount {
-    font-size: 1.2rem;
+  .mobile-action-btn {
+    padding: 8px 4px;
+    min-height: 45px;
   }
 }
 </style>

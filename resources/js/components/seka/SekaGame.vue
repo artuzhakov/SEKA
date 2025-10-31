@@ -4,14 +4,13 @@
     <ReadyCheck 
       v-if="gameState.status === 'waiting'"
       :players="players"
-      :is-active="gameState.status === 'waiting'"
       :time-remaining="readyCheck.timeRemaining"
       @player-ready="handlePlayerReady"
       @player-cancel-ready="handlePlayerCancelReady"
       @timeout="handleReadyTimeout"
     />
 
-    <!-- Заголовок и информация -->
+    <!-- Заголовок игры -->
     <div class="game-header">
       <h1>🎴 SEKA</h1>
       <div class="game-meta">
@@ -19,104 +18,26 @@
         <div class="meta-item">Раунд: <strong>{{ currentRound }}</strong></div>
         <div class="meta-item">Дилер: <strong>{{ getDealer().name }}</strong></div>
         <div class="meta-item" v-if="gameState.status === 'waiting'">
-          Статус: <strong class="waiting-status">⏳ Ожидание игроков</strong>
-        </div>
-        <div class="meta-item" v-else-if="gameState.status === 'active'">
-          Статус: <strong class="active-status">🎯 Игра идет</strong>
+          Готовы: <strong class="waiting-status">{{ readyCount }}/6</strong>
         </div>
       </div>
     </div>
 
-    <!-- Игровой стол -->
-    <div class="game-table">
-      <!-- Игрок 1 (верхний левый) -->
-      <div class="player-seat seat-1" :class="getPlayerClasses(1)">
-        <PlayerSpot 
-          :player="getPlayer(1)"
-          :cards="getPlayerCards(1)"
-          :is-current-turn="currentPlayerId === 1 && gameState.status === 'active'"
-          :is-dealer="dealerId === 1"
-          @player-action="handlePlayerAction"
-        />
-      </div>
-
-      <!-- Игрок 2 (верхний центр) -->
-      <div class="player-seat seat-2" :class="getPlayerClasses(2)">
-        <PlayerSpot 
-          :player="getPlayer(2)"
-          :cards="getPlayerCards(2)"
-          :is-current-turn="currentPlayerId === 2 && gameState.status === 'active'"
-          :is-dealer="dealerId === 2"
-          @player-action="handlePlayerAction"
-        />
-      </div>
-
-      <!-- Игрок 3 (верхний правый) -->
-      <div class="player-seat seat-3" :class="getPlayerClasses(3)">
-        <PlayerSpot 
-          :player="getPlayer(3)"
-          :cards="getPlayerCards(3)"
-          :is-current-turn="currentPlayerId === 3 && gameState.status === 'active'"
-          :is-dealer="dealerId === 3"
-          @player-action="handlePlayerAction"
-        />
-      </div>
-
-      <!-- Банк в центре -->
-      <div class="pot-display">
-        <div class="pot-amount">{{ pot }} 🪙</div>
-        <div class="pot-label">Банк</div>
-        
-        <!-- Индикатор состояния игры -->
-        <div class="game-status-indicator" :class="gameState.status">
-          {{ getGameStatusText() }}
-        </div>
-      </div>
-
-      <!-- Игрок 4 (нижний правый) -->
-      <div class="player-seat seat-4" :class="getPlayerClasses(4)">
-        <PlayerSpot 
-          :player="getPlayer(4)"
-          :cards="getPlayerCards(4)"
-          :is-current-turn="currentPlayerId === 4 && gameState.status === 'active'"
-          :is-dealer="dealerId === 4"
-          @player-action="handlePlayerAction"
-        />
-      </div>
-
-      <!-- Игрок 5 (нижний центр) -->
-      <div class="player-seat seat-5" :class="getPlayerClasses(5)">
-        <PlayerSpot 
-          :player="getPlayer(5)"
-          :cards="getPlayerCards(5)"
-          :is-current-turn="currentPlayerId === 5 && gameState.status === 'active'"
-          :is-dealer="dealerId === 5"
-          @player-action="handlePlayerAction"
-        />
-      </div>
-
-      <!-- Игрок 6 (нижний левый) -->
-      <div class="player-seat seat-6" :class="getPlayerClasses(6)">
-        <PlayerSpot 
-          :player="getPlayer(6)"
-          :cards="getPlayerCards(6)"
-          :is-current-turn="currentPlayerId === 6 && gameState.status === 'active'"
-          :is-dealer="dealerId === 6"
-          @player-action="handlePlayerAction"
-        />
-      </div>
-    </div>
-
-    <!-- Мобильная панель действий -->
-    <MobileActionPanel 
-      v-if="isMobile && isMyTurn && gameState.status === 'active'"
-      :player="currentPlayer"
-      :is-visible="showMobileActions"
-      @action="takeAction"
-      @close="showMobileActions = false"
+    <!-- Игровой стол управляет своей логикой -->
+    <GameTable
+      :players="players"
+      :player-cards="playerCards"
+      :current-player-id="currentPlayerId"
+      :bank="pot"
+      :current-round="currentRound"
+      :game-status="gameState.status"
+      :dealer-id="dealerId"
+      :is-mobile="isMobile"
+      @player-action="handlePlayerAction"
+      @deal-cards="startGame"
     />
 
-    <!-- Дебаг информация -->
+    <!-- Дебаг панель -->
     <DebugPanel 
       v-if="showDebug" 
       :game-state="gameState"
@@ -127,8 +48,7 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
-import PlayerSpot from './components/PlayerSpot.vue'
-import MobileActionPanel from './components/MobileActionPanel.vue'
+import GameTable from './components/GameTable.vue'
 import DebugPanel from './components/DebugPanel.vue'
 import ReadyCheck from './components/ReadyCheck.vue'
 
@@ -146,7 +66,7 @@ const createTestCards = () => {
   }))
 }
 
-// 🎯 ИНИЦИАЛИЗАЦИЯ ИГРОКОВ С СИСТЕМОЙ ГОТОВНОСТИ
+// 🎯 ИНИЦИАЛИЗАЦИЯ ИГРОКОВ
 const players = reactive([
   { 
     id: 1, 
@@ -155,10 +75,8 @@ const players = reactive([
     currentBet: 0, 
     isFolded: false, 
     isDark: false, 
-    isReady: false, // 🆕 Готовность
-    readyTimeRemaining: 30, // 🆕 Таймер готовности
-    cards: [],
-    lastAction: '',
+    isReady: false,
+    readyTimeRemaining: 30,
     position: 1
   },
   { 
@@ -170,8 +88,6 @@ const players = reactive([
     isDark: false, 
     isReady: false,
     readyTimeRemaining: 30,
-    cards: [],
-    lastAction: '',
     position: 2
   },
   { 
@@ -181,10 +97,8 @@ const players = reactive([
     currentBet: 0, 
     isFolded: false, 
     isDark: false, 
-    isReady: true, // 🆕 Уже готов
+    isReady: true,
     readyTimeRemaining: 15,
-    cards: [],
-    lastAction: '',
     position: 3
   },
   { 
@@ -196,8 +110,6 @@ const players = reactive([
     isDark: false, 
     isReady: false,
     readyTimeRemaining: 30,
-    cards: [],
-    lastAction: '',
     position: 4
   },
   { 
@@ -209,8 +121,6 @@ const players = reactive([
     isDark: false, 
     isReady: false,
     readyTimeRemaining: 30,
-    cards: [],
-    lastAction: '',
     position: 5
   },
   { 
@@ -222,91 +132,59 @@ const players = reactive([
     isDark: false, 
     isReady: false,
     readyTimeRemaining: 30,
-    cards: [],
-    lastAction: '',
     position: 6
   }
 ])
 
-// 🎯 СОСТОЯНИЕ ИГРЫ С СИСТЕМОЙ ГОТОВНОСТИ
+// 🎯 КАРТЫ ИГРОКОВ
+const playerCards = reactive({})
+
+// 🎯 СОСТОЯНИЕ ИГРЫ
 const gameState = reactive({
   pot: 0,
   currentRound: 1,
   currentPlayerId: 1,
   dealerId: 1,
   baseBet: 50,
-  status: 'waiting' // 🆕 waiting, active, finished
+  status: 'waiting'
 })
 
-// 🆕 СИСТЕМА ГОТОВНОСТИ
+// 🎯 СИСТЕМА ГОТОВНОСТИ
 const readyCheck = reactive({
   timeRemaining: 30,
   timer: null,
   canStart: false
 })
 
-const showDebug = ref(true)
+const showDebug = ref(false)
 const isMobile = ref(false)
-const showMobileActions = ref(false)
+const windowWidth = ref(0)
 
 // 🎯 ВЫЧИСЛЯЕМЫЕ СВОЙСТВА
 const pot = computed(() => gameState.pot)
 const currentRound = computed(() => gameState.currentRound)
 const currentPlayerId = computed(() => gameState.currentPlayerId)
 const dealerId = computed(() => gameState.dealerId)
-const baseBet = computed(() => gameState.baseBet)
 
-const currentPlayer = computed(() => players.find(p => p.id === currentPlayerId.value))
-const isMyTurn = computed(() => currentPlayerId.value === 1 && gameState.status === 'active')
-const activePlayers = computed(() => players.filter(p => !p.isFolded))
-
-// 🆕 Готовые игроки
 const readyPlayers = computed(() => players.filter(p => p.isReady && p.id))
 const readyCount = computed(() => readyPlayers.value.length)
 
-// 🎯 МЕТОДЫ
-const getPlayer = (id) => {
-  const player = players.find(p => p.id === id)
-  if (player) return player
-  
-  return { 
-    id: null, 
-    name: 'Свободно', 
-    balance: 0, 
-    currentBet: 0, 
-    isFolded: true, 
-    isDark: false, 
-    isReady: false,
-    readyTimeRemaining: 0,
-    cards: [], 
-    lastAction: '',
-    position: id
-  }
-}
-
-const getPlayerCards = (playerId) => {
-  const player = getPlayer(playerId)
-  return player.cards || []
-}
-
 const getDealer = () => players.find(p => p.id === dealerId.value) || players[0]
 
-const getPlayerClasses = (seatId) => ({
-  'occupied': getPlayer(seatId).name !== 'Свободно',
-  'empty': getPlayer(seatId).name === 'Свободно',
-  'current': currentPlayerId.value === seatId && gameState.status === 'active',
-  'dealer': dealerId.value === seatId
-})
-
-// 🆕 ОБРАБОТЧИКИ ГОТОВНОСТИ
+// 🎯 СИСТЕМА ГОТОВНОСТИ
 const handlePlayerReady = (playerId) => {
   const player = players.find(p => p.id === playerId)
-  if (player) {
+  if (player && gameState.status === 'waiting') {
     player.isReady = true
     console.log(`✅ Игрок ${player.name} готов`)
     
-    // Проверяем можно ли начать игру
-    checkGameStart()
+    if (readyCount.value >= 2) {
+      setTimeout(() => {
+        if (gameState.status === 'waiting' && readyCount.value >= 2) {
+          startGame()
+        }
+      }, 2000)
+    }
   }
 }
 
@@ -320,56 +198,59 @@ const handlePlayerCancelReady = (playerId) => {
 
 const handleReadyTimeout = () => {
   console.log('⏰ Таймаут готовности!')
-  
-  // Автоматически отмечаем готовыми всех активных игроков
   players.forEach(player => {
     if (player.id && !player.isFolded) {
       player.isReady = true
     }
   })
-  
-  // Запускаем игру
   startGame()
 }
 
-// 🆕 ПРОВЕРКА СТАРТА ИГРЫ
-const checkGameStart = () => {
-  if (readyCount.value >= 2 && gameState.status === 'waiting') {
-    console.log('🚀 Достаточно игроков готово, запускаем игру...')
-    startGame()
-  }
-}
-
-// 🆕 ЗАПУСК ИГРЫ
+// 🎯 ЗАПУСК ИГРЫ
 const startGame = () => {
+  if (readyCount.value < 2) {
+    console.log('❌ Недостаточно игроков для старта')
+    return
+  }
+
+  console.log('🚀 Запускаем игру...')
+  
+  players.forEach(player => {
+    if (player.id && !player.isReady) {
+      console.log(`👋 Игрок ${player.name} выкинут из игры`)
+      player.id = null
+      player.name = 'Свободно'
+    }
+  })
+
   gameState.status = 'active'
-  console.log('🎮 Игра началась!')
   
-  // Раздаем карты
-  dealCards()
-  
-  // Останавливаем таймер готовности
   if (readyCheck.timer) {
     clearInterval(readyCheck.timer)
   }
+  
+  // Раздаем карты
+  dealCards()
 }
 
-// 🆕 РАЗДАЧА КАРТ
+// 🎯 РАЗДАЧА КАРТ
 const dealCards = () => {
-  console.log('🃏 Раздаем карты...')
+  console.log('🃏 Начинаем раздачу карты...')
   
-  players.forEach(player => {
+  players.forEach((player, index) => {
     if (player.id) {
-      player.cards = createTestCards()
-      // Текущий игрок видит свои карты
+      playerCards[player.id] = createTestCards()
       if (player.id === 1) {
-        player.cards.forEach(card => card.isVisible = true)
+        playerCards[player.id].forEach(card => card.isVisible = true)
       }
+      console.log(`🎴 Игрок ${player.name} получил карты`)
     }
   })
-  
-  // Устанавливаем первого игрока
-  gameState.currentPlayerId = 2 // Игрок после дилера начинает
+
+  setTimeout(() => {
+    gameState.currentPlayerId = 2
+    console.log('🎯 Игра началась! Первый ход у:', players.find(p => p.id === 2)?.name)
+  }, 1000)
 }
 
 const handlePlayerAction = (action) => {
@@ -381,12 +262,11 @@ const handlePlayerAction = (action) => {
 const takeAction = (action) => {
   console.log('🎯 Действие:', action)
   
-  const player = currentPlayer.value
+  const player = players.find(p => p.id === currentPlayerId.value)
   if (!player) return
 
   player.lastAction = action
 
-  // Простая логика действий для тестирования
   switch(action) {
     case 'check':
       console.log('✅ Пропуск хода')
@@ -411,40 +291,42 @@ const takeAction = (action) => {
       break
     case 'dark':
       player.isDark = true
-      player.cards.forEach(card => card.isVisible = false)
+      if (playerCards[player.id]) {
+        playerCards[player.id].forEach(card => card.isVisible = false)
+      }
       console.log('✅ Игра в темную')
       break
     case 'open':
       player.isDark = false
-      player.cards.forEach(card => card.isVisible = true)
+      if (playerCards[player.id]) {
+        playerCards[player.id].forEach(card => card.isVisible = true)
+      }
       console.log('✅ Открытие карт')
       break
   }
 
-  // Передаем ход следующему игроку
   if (gameState.status === 'active') {
     passToNextPlayer()
   }
 }
 
 const passToNextPlayer = () => {
-  const active = activePlayers.value
+  const active = players.filter(p => !p.isFolded && p.id)
   if (active.length === 0) return
   
   const currentIndex = active.findIndex(p => p.id === currentPlayerId.value)
   const nextIndex = (currentIndex + 1) % active.length
   gameState.currentPlayerId = active[nextIndex].id
   
-  console.log('🔄 Ход передан:', getPlayer(gameState.currentPlayerId).name)
+  console.log('🔄 Ход передан:', players.find(p => p.id === gameState.currentPlayerId)?.name)
 }
 
-// 🆕 ТАЙМЕР ГОТОВНОСТИ
+// 🎯 ТАЙМЕР ГОТОВНОСТИ
 const startReadyTimer = () => {
   readyCheck.timer = setInterval(() => {
     if (readyCheck.timeRemaining > 0) {
       readyCheck.timeRemaining--
       
-      // Обновляем таймеры у игроков
       players.forEach(player => {
         if (player.id && player.readyTimeRemaining > 0) {
           player.readyTimeRemaining--
@@ -456,25 +338,10 @@ const startReadyTimer = () => {
   }, 1000)
 }
 
-// 🆕 ТЕКСТ СТАТУСА ИГРЫ
-const getGameStatusText = () => {
-  switch(gameState.status) {
-    case 'waiting':
-      return `⏳ Ожидание (${readyCount.value}/6)`
-    case 'active':
-      return '🎯 Игра идет'
-    case 'finished':
-      return '🏁 Игра завершена'
-    default:
-      return '❓ Неизвестно'
-  }
-}
-
 const handleTestAction = (action) => {
-  console.log('🔧 Тестовое действие из DebugPanel:', action)
+  console.log('🔧 Тестовое действие:', action)
   
   if (action === 'reset') {
-    // Сброс игры для тестирования
     gameState.status = 'waiting'
     readyCheck.timeRemaining = 30
     players.forEach(player => {
@@ -484,32 +351,29 @@ const handleTestAction = (action) => {
         player.isFolded = false
         player.isDark = false
         player.currentBet = 0
-        player.cards = []
       }
     })
+    Object.keys(playerCards).forEach(key => delete playerCards[key])
     startReadyTimer()
   }
 }
 
-const checkMobile = () => {
-  isMobile.value = window.innerWidth < 768
+// Проверка устройства
+const checkDevice = () => {
+  windowWidth.value = window.innerWidth
+  isMobile.value = windowWidth.value < 768
 }
 
 // 🎯 LIFECYCLE
 onMounted(() => {
-  checkMobile()
-  window.addEventListener('resize', checkMobile)
-  
-  // Запускаем таймер готовности
+  checkDevice()
+  window.addEventListener('resize', checkDevice)
   startReadyTimer()
-  
-  console.log('🎮 Игра SEKA инициализирована с системой готовности!')
-  console.log('👥 Игроки:', players.map(p => `${p.name} (готов: ${p.isReady})`))
-  console.log('🎯 Текущий статус:', gameState.status)
+  console.log('🎮 SEKA инициализирована!')
 })
 
 onUnmounted(() => {
-  window.removeEventListener('resize', checkMobile)
+  window.removeEventListener('resize', checkDevice)
   if (readyCheck.timer) {
     clearInterval(readyCheck.timer)
   }
@@ -517,43 +381,63 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* Стили остаются в основном те же, добавляем только новые */
+.seka-game {
+  position: relative;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #0a2f0a 0%, #1a5a1a 100%);
+  padding: 20px;
+  overflow: hidden;
+}
+
+/* Заголовок */
+.game-header {
+  text-align: center;
+  margin-bottom: 20px;
+  color: white;
+}
+
+.game-header h1 {
+  font-size: 2.5rem;
+  margin-bottom: 15px;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+.game-meta {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.meta-item {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 8px 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  font-size: 1rem;
+}
 
 .waiting-status {
-  color: #f6e05e;
-}
-
-.active-status {
   color: #68d391;
 }
 
-.game-status-indicator {
-  margin-top: 10px;
-  padding: 6px 12px;
-  border-radius: 15px;
-  font-size: 0.8rem;
-  font-weight: bold;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+/* Адаптивность */
+@media (max-width: 768px) {
+  .seka-game {
+    padding: 10px;
+  }
+  
+  .game-header h1 {
+    font-size: 2rem;
+  }
+  
+  .game-meta {
+    gap: 10px;
+  }
+  
+  .meta-item {
+    padding: 6px 12px;
+    font-size: 0.9rem;
+  }
 }
-
-.game-status-indicator.waiting {
-  background: rgba(246, 224, 94, 0.2);
-  color: #f6e05e;
-  border: 1px solid #f6e05e;
-}
-
-.game-status-indicator.active {
-  background: rgba(104, 211, 145, 0.2);
-  color: #68d391;
-  border: 1px solid #68d391;
-}
-
-.game-status-indicator.finished {
-  background: rgba(160, 174, 192, 0.2);
-  color: #a0aec0;
-  border: 1px solid #a0aec0;
-}
-
-/* Остальные стили из предыдущей версии... */
 </style>
