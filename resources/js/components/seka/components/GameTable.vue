@@ -35,8 +35,18 @@
                 :is-current-turn="isCurrentTurn(position)"
                 :is-dealer="isDealer(position)"
                 :show-ready="gameStatus === 'waiting'"
-                @player-action="handlePlayerAction"
-                @player-ready="() => $emit('player-ready', getPlayer(position)?.id)"
+                :show-actions="isCurrentTurn(position) && gameStatus === 'active'"
+                :current-round="currentRound"
+                :dealer-position="getDealerPosition()"
+                :current-bet="getCurrentBet()"
+                @player-action="(action) => {
+                  console.log('🎯 [GameTable] Player action received:', action, 'from player:', getPlayer(position).name)
+                  emit('player-action', action)
+                }"
+                @player-ready="(playerId) => {
+                  console.log('2. GameTable: event received', playerId)
+                  emit('player-ready', playerId)
+                }"
               />
             </div>
 
@@ -172,7 +182,11 @@ const props = defineProps({
 const emit = defineEmits(['player-action', 'player-ready', 'deal-cards'])
 
 // 🎯 ВЫЧИСЛЯЕМЫЕ СВОЙСТВА
-const isMyTurn = computed(() => props.currentPlayerId === 1)
+const isMyTurn = computed(() => {
+  // Для мобильной версии считаем что игрок 1 - это текущий пользователь
+  const myPlayer = props.players.find(p => p.position === 1)
+  return myPlayer && myPlayer.id === props.currentPlayerId
+})
 
 // 🎯 МЕТОДЫ
 const getPlayer = (position) => {
@@ -185,6 +199,15 @@ const getPlayer = (position) => {
   }
 }
 
+const getDealerPosition = () => {
+  const dealer = props.players.find(p => p.id === props.dealerId)
+  return dealer?.position || 1
+}
+
+const getCurrentBet = () => {
+  return Math.max(...props.players.map(p => p.currentBet), 50)
+}
+
 const getPlayerCards = (position) => {
   const player = getPlayer(position)
   return props.playerCards[player.id] || []
@@ -194,7 +217,10 @@ const getCurrentPlayer = () => getPlayer(props.players.findIndex(p => p.id === p
 
 const isCurrentTurn = (position) => {
   const player = getPlayer(position)
-  return player.id === props.currentPlayerId
+  const result = player.id === props.currentPlayerId
+  console.log(`🎯 [GameTable] isCurrentTurn(${position}):`, result, 
+    'player:', player.name, 'currentPlayerId:', props.currentPlayerId)
+  return result
 }
 
 const isDealer = (position) => {
@@ -258,8 +284,15 @@ const getActionIcon = (action) => {
 }
 
 const handleAction = (action) => {
-  if (isMyTurn.value) {
+  console.log('📱 [Mobile] Action clicked:', action)
+  console.log('📱 [Mobile] isMyTurn:', isMyTurn.value)
+  console.log('📱 [Mobile] gameStatus:', props.gameStatus)
+  
+  if (isMyTurn.value && props.gameStatus === 'active') {
+    console.log('📱 [Mobile] Emitting action:', action)
     emit('player-action', action)
+  } else {
+    console.log('📱 [Mobile] Action ignored - not your turn or game not active')
   }
 }
 
@@ -397,8 +430,12 @@ const handlePlayerAction = (action) => {
 .player-position {
   position: absolute;
   z-index: 10;
-  width: 140px;
+  width: 180px; /* ← УВЕЛИЧИВАЕМ с 140px */
+  min-height: 160px; /* ← ДОБАВЛЯЕМ минимальную высоту */
   transition: all 0.3s ease;
+  display: flex;
+  justify-content: center;
+  align-items: center;
 }
 
 .pos-1 { top: -15%; left: 50%; transform: translateX(-50%); }
@@ -412,8 +449,13 @@ const handlePlayerAction = (action) => {
 .player-position.empty { opacity: 0.3; }
 .player-position.current { transform: scale(1.15); z-index: 20; }
 .player-position.current.pos-1,
-.player-position.current.pos-5 { 
+.player-position.current.pos-4 { 
   transform: translateX(-50%) scale(1.15); 
+}
+
+.player-position.current.pos-3,
+.player-position.current.pos-5 { 
+  transform: translateY(-50%) scale(1.15); 
 }
 
 /* 🎴 МОБИЛЬНАЯ ВЕРСИЯ */
@@ -783,6 +825,16 @@ const handlePlayerAction = (action) => {
   color: white;
   font-weight: bold;
   font-size: 0.9rem;
+}
+
+.current-player {
+  color: #fbbf24;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
 }
 
 /* Анимации */

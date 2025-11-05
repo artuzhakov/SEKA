@@ -1,5 +1,6 @@
 <template>
   <div class="seka-game" :class="{ 'mobile': isMobile }">
+
     <!-- Система готовности -->
     <ReadyCheck 
       v-if="gameState.status === 'waiting'"
@@ -10,6 +11,10 @@
       @timeout="handleReadyTimeout"
     />
 
+    <div class="debug-controls">
+      <button @click="clearSave" class="debug-btn">🗑️ Очистить сохранение</button>
+    </div>
+
     <!-- Заголовок игры -->
     <div class="game-header">
       <h1>🎴 SEKA</h1>
@@ -19,6 +24,14 @@
         <div class="meta-item">Дилер: <strong>{{ getDealer().name }}</strong></div>
         <div class="meta-item" v-if="gameState.status === 'waiting'">
           Готовы: <strong class="waiting-status">{{ readyCount }}/6</strong>
+          <div class="timer-display">⏱️ {{ readyCheck.timeRemaining }}с</div>
+        </div>
+        <!-- ДОБАВЛЯЕМ ТЕКУЩЕГО ИГРОКА -->
+        <div class="meta-item" v-if="gameState.status === 'active'">
+          Ходит: <strong class="current-player">{{ getCurrentPlayer().name }}</strong>
+        </div>
+        <div class="meta-item" v-if="gameState.status === 'active'">
+          Игроков: <strong>{{ activePlayersCount }}/6</strong>
         </div>
       </div>
     </div>
@@ -34,6 +47,7 @@
       :dealer-id="dealerId"
       :is-mobile="isMobile"
       @player-action="handlePlayerAction"
+      @player-ready="handlePlayerReady"
       @deal-cards="startGame"
     />
 
@@ -43,11 +57,26 @@
       :game-state="gameState"
       @test-action="handleTestAction"
     />
+
+    <!-- Ползунок для повышения ставки -->
+    <div class="slider-modal">
+      <div class="slider-content">
+        <h3>Повышение ставки</h3>
+        <div class="slider-range">
+          <span>Min: {{ minBet }}</span>
+          <input type="range" :min="minBet" :max="maxBet" v-model="currentBet">
+          <span>Max: {{ maxBet }}</span>
+        </div>
+        <div class="bet-amount">Ставка: {{ currentBet }}🪙</div>
+        <button @click="confirmRaise">Подтвердить</button>
+      </div>
+    </div>
+
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import GameTable from './components/GameTable.vue'
 import DebugPanel from './components/DebugPanel.vue'
 import ReadyCheck from './components/ReadyCheck.vue'
@@ -97,7 +126,7 @@ const players = reactive([
     currentBet: 0, 
     isFolded: false, 
     isDark: false, 
-    isReady: true,
+    isReady: false,
     readyTimeRemaining: 15,
     position: 3
   },
@@ -151,7 +180,7 @@ const gameState = reactive({
 
 // 🎯 СИСТЕМА ГОТОВНОСТИ
 const readyCheck = reactive({
-  timeRemaining: 30,
+  timeRemaining: 10,
   timer: null,
   canStart: false
 })
@@ -167,24 +196,44 @@ const currentPlayerId = computed(() => gameState.currentPlayerId)
 const dealerId = computed(() => gameState.dealerId)
 
 const readyPlayers = computed(() => players.filter(p => p.isReady && p.id))
-const readyCount = computed(() => readyPlayers.value.length)
+const readyCount = computed(() => {
+  const count = readyPlayers.value.length
+  console.log('🔢 Ready count updated:', count)
+  return count
+})
+
+const activePlayersCount = computed(() => {
+  return players.filter(p => p.id && !p.isFolded).length
+})
 
 const getDealer = () => players.find(p => p.id === dealerId.value) || players[0]
 
 // 🎯 СИСТЕМА ГОТОВНОСТИ
 const handlePlayerReady = (playerId) => {
+
+  console.log('🎯 [SekaGame] handlePlayerReady CALLED with playerId:', playerId)
+  
   const player = players.find(p => p.id === playerId)
-  if (player && gameState.status === 'waiting') {
-    player.isReady = true
-    console.log(`✅ Игрок ${player.name} готов`)
+  if (!player || gameState.status !== 'waiting') return
+  
+  player.isReady = !player.isReady
+  console.log('✅ [SekaGame] Player state updated:', {
+    name: player.name,
+    isReady: player.isReady
+  })
+  
+  // 🔥 НОВАЯ ЛОГИКА: Запускаем таймер автостарта при 2+ игроках
+  if (readyCount.value >= 2 && !readyCheck.canStart) {
+    console.log('🚀 [SekaGame] 2+ players ready, starting countdown...')
+    readyCheck.canStart = true
     
-    if (readyCount.value >= 2) {
-      setTimeout(() => {
-        if (gameState.status === 'waiting' && readyCount.value >= 2) {
-          startGame()
-        }
-      }, 2000)
-    }
+    // Таймер автостарта через 10 секунд
+    setTimeout(() => {
+      if (gameState.status === 'waiting' && readyCount.value >= 2) {
+        console.log('⏰ [SekaGame] Auto-start timer expired, starting game!')
+        startGame()
+      }
+    }, 10000) // 10 секунд
   }
 }
 
@@ -198,16 +247,30 @@ const handlePlayerCancelReady = (playerId) => {
 
 const handleReadyTimeout = () => {
   console.log('⏰ Таймаут готовности!')
-  players.forEach(player => {
-    if (player.id && !player.isFolded) {
-      player.isReady = true
-    }
-  })
-  startGame()
+  
+  // 🔥 ИСПРАВЛЕНО: ВЫКИДЫВАЕМ неготовых, а не отмечаем их готовыми
+  const readyPlayers = players.filter(p => p.isReady && p.id)
+  console.log(`⏰ Таймаут! Готовых игроков: ${readyPlayers.length}`)
+  
+  if (readyPlayers.length >= 2) {
+    console.log('⏰ Запускаем игру с готовыми игроками...')
+    startGame()
+  } else {
+    console.log('⏰ Недостаточно готовых игроков для старта')
+    // Можно показать сообщение или перезапустить таймер
+  }
 }
 
 // 🎯 ЗАПУСК ИГРЫ
 const startGame = () => {
+
+  console.log('🔍 [DEBUG] Before start - players:', players.map(p => ({
+    name: p.name,
+    id: p.id,
+    isReady: p.isReady,
+    isFolded: p.isFolded
+  })))
+
   if (readyCount.value < 2) {
     console.log('❌ Недостаточно игроков для старта')
     return
@@ -215,13 +278,42 @@ const startGame = () => {
 
   console.log('🚀 Запускаем игру...')
   
+  // 🔥 ПРАВИЛЬНО ВЫКИДЫВАЕМ НЕГОТОВЫХ ИГРОКОВ
   players.forEach(player => {
     if (player.id && !player.isReady) {
-      console.log(`👋 Игрок ${player.name} выкинут из игры`)
-      player.id = null
-      player.name = 'Свободно'
+      console.log(`👋 Игрок ${player.name} выкинут из игры (не готов)`)
+      
+      // Сохраняем позицию перед очисткой
+      const position = player.position
+      
+      // Полностью очищаем игрока
+      Object.assign(player, {
+        id: null,
+        name: 'Свободно',
+        balance: 0,
+        isFolded: true,
+        isReady: false,
+        isDark: false,
+        currentBet: 0,
+        position: position, // сохраняем позицию
+        lastAction: ''
+      })
+      
+      // Очищаем карты
+      if (playerCards[player.id]) {
+        delete playerCards[player.id]
+      }
     }
   })
+
+  // 🔥 ПЕРЕСЧИТЫВАЕМ АКТИВНЫХ ИГРОКОВ
+  const activePlayers = players.filter(p => p.id && !p.isFolded)
+  console.log(`🎯 Активных игроков после фильтрации: ${activePlayers.length}`)
+  
+  if (activePlayers.length < 2) {
+    console.log('❌ После фильтрации осталось меньше 2 игроков!')
+    return
+  }
 
   gameState.status = 'active'
   
@@ -229,33 +321,48 @@ const startGame = () => {
     clearInterval(readyCheck.timer)
   }
   
-  // Раздаем карты
+  localStorage.removeItem('sekaGameState')
+  
+  // Раздаем карты ТОЛЬКО активным игрокам
   dealCards()
 }
 
 // 🎯 РАЗДАЧА КАРТ
 const dealCards = () => {
-  console.log('🃏 Начинаем раздачу карты...')
+  console.log('🃏 Начинаем раздачу карты активным игрокам...')
   
   players.forEach((player, index) => {
-    if (player.id) {
+    // Раздаем карты ТОЛЬКО активным игрокам (с id и не сбросившим)
+    if (player.id && !player.isFolded) {
       playerCards[player.id] = createTestCards()
-      if (player.id === 1) {
-        playerCards[player.id].forEach(card => card.isVisible = true)
-      }
+      playerCards[player.id].forEach(card => {
+        card.isVisible = false
+      })
       console.log(`🎴 Игрок ${player.name} получил карты`)
+    } else {
+      console.log(`⏭️ Игрок ${player.name} пропускается (не активен)`)
     }
   })
 
-  setTimeout(() => {
-    gameState.currentPlayerId = 2
-    console.log('🎯 Игра началась! Первый ход у:', players.find(p => p.id === 2)?.name)
-  }, 1000)
+  // Находим первого активного игрока для хода
+  const firstActivePlayer = players.find(p => p.id && !p.isFolded)
+  if (firstActivePlayer) {
+    setTimeout(() => {
+      gameState.currentPlayerId = firstActivePlayer.id
+      console.log('🎯 Игра началась! Первый ход у:', firstActivePlayer.name)
+    }, 1000)
+  }
 }
 
 const handlePlayerAction = (action) => {
-  if (currentPlayerId.value === 1 && gameState.status === 'active') {
+  console.log('🎯 [SekaGame] handlePlayerAction called:', action)
+  console.log('🎯 [SekaGame] Current player ID:', currentPlayerId.value)
+  
+  // ИСПРАВЛЕНО: проверяем что действие от ЛЮБОГО текущего игрока
+  if (gameState.status === 'active') {
     takeAction(action)
+  } else {
+    console.log('⚠️ [SekaGame] Action ignored - game not active')
   }
 }
 
@@ -269,43 +376,63 @@ const takeAction = (action) => {
 
   switch(action) {
     case 'check':
-      console.log('✅ Пропуск хода')
+      // Только если нет текущей ставки
+      if (getCurrentBet() === 0) {
+        console.log('✅ Пропуск хода')
+      } else {
+        console.log('❌ Нельзя пропустить при наличии ставки')
+        return
+      }
       break
+      
     case 'call':
-      const callAmount = 50
-      player.currentBet += callAmount
-      player.balance -= callAmount
-      gameState.pot += callAmount
-      console.log('✅ Поддержка ставки:', callAmount)
+      const callAmount = getCurrentBet() - player.currentBet
+      if (player.balance >= callAmount) {
+        player.currentBet += callAmount
+        player.balance -= callAmount
+        gameState.pot += callAmount
+        console.log('✅ Поддержка ставки:', callAmount)
+      }
       break
+      
     case 'raise':
-      const raiseAmount = 100
-      player.currentBet += raiseAmount
-      player.balance -= raiseAmount
-      gameState.pot += raiseAmount
-      console.log('✅ Повышение ставки:', raiseAmount)
-      break
+      // Открываем модалку с ползунком
+      openRaiseModal(player)
+      return // не передаем ход пока не подтвердят
+      
     case 'fold':
       player.isFolded = true
-      console.log('✅ Пас')
+      player.cards.forEach(card => card.isVisible = false)
+      console.log('✅ Игрок сбросил карты')
       break
+      
     case 'dark':
-      player.isDark = true
-      if (playerCards[player.id]) {
-        playerCards[player.id].forEach(card => card.isVisible = false)
-      }
-      console.log('✅ Игра в темную')
-      break
     case 'open':
-      player.isDark = false
-      if (playerCards[player.id]) {
-        playerCards[player.id].forEach(card => card.isVisible = true)
+      // Для темной/открытия нужна ставка
+      if (player.currentBet === 0) {
+        console.log('❌ Сначала сделайте ставку')
+        return
       }
-      console.log('✅ Открытие карт')
+      player.isDark = (action === 'dark')
+      player.cards.forEach(card => card.isVisible = (action === 'open'))
+      console.log(`✅ ${action === 'dark' ? 'Игра в темную' : 'Открытие карт'}`)
+      break
+      
+    case 'reveal':
+      // Вскрытие - ставка в 2x от предыдущего игрока
+      const lastPlayerBet = getLastPlayerBet()
+      const revealAmount = lastPlayerBet * 2
+      if (player.balance >= revealAmount) {
+        player.currentBet += revealAmount
+        player.balance -= revealAmount
+        gameState.pot += revealAmount
+        console.log('✅ Вскрытие с ставкой:', revealAmount)
+      }
       break
   }
 
-  if (gameState.status === 'active') {
+  // Передаем ход только после успешного действия со ставкой
+  if (gameState.status === 'active' && action !== 'raise') {
     passToNextPlayer()
   }
 }
@@ -319,6 +446,57 @@ const passToNextPlayer = () => {
   gameState.currentPlayerId = active[nextIndex].id
   
   console.log('🔄 Ход передан:', players.find(p => p.id === gameState.currentPlayerId)?.name)
+}
+
+// 🎯 МЕТОДЫ ДЛЯ СТАВОК
+const getCurrentBet = () => {
+  // Максимальная ставка среди всех игроков
+  return Math.max(...players.map(p => p.currentBet), gameState.baseBet)
+}
+
+const getLastPlayerBet = () => {
+  // Ставка предыдущего игрока (исключая текущего)
+  const activePlayers = players.filter(p => !p.isFolded && p.id)
+  const currentIndex = activePlayers.findIndex(p => p.id === currentPlayerId.value)
+  const prevIndex = (currentIndex - 1 + activePlayers.length) % activePlayers.length
+  return activePlayers[prevIndex]?.currentBet || 0
+}
+
+const getPlayerAfterDealer = () => {
+  const dealerPosition = players.find(p => p.id === dealerId.value)?.position
+  if (!dealerPosition) return null
+  
+  // Находим следующего активного игрока после дилера
+  const activePlayers = players.filter(p => !p.isFolded && p.id)
+  const dealerIndex = activePlayers.findIndex(p => p.position === dealerPosition)
+  const nextIndex = (dealerIndex + 1) % activePlayers.length
+  return activePlayers[nextIndex]
+}
+
+// 🎯 ПОЛЗУНОК ДЛЯ ПОВЫШЕНИЯ
+const raiseModal = ref(false)
+const currentRaiseAmount = ref(0)
+const minBet = computed(() => getCurrentBet() + gameState.baseBet)
+const maxBet = computed(() => {
+  const player = players.find(p => p.id === currentPlayerId.value)
+  return player ? player.balance : 0
+})
+
+const openRaiseModal = (player) => {
+  currentRaiseAmount.value = minBet.value
+  raiseModal.value = true
+}
+
+const confirmRaise = () => {
+  const player = players.find(p => p.id === currentPlayerId.value)
+  if (player && player.balance >= currentRaiseAmount.value) {
+    player.currentBet += currentRaiseAmount.value
+    player.balance -= currentRaiseAmount.value
+    gameState.pot += currentRaiseAmount.value
+    console.log('✅ Повышение ставки:', currentRaiseAmount.value)
+    raiseModal.value = false
+    passToNextPlayer()
+  }
 }
 
 // 🎯 ТАЙМЕР ГОТОВНОСТИ
@@ -336,6 +514,10 @@ const startReadyTimer = () => {
       handleReadyTimeout()
     }
   }, 1000)
+}
+
+const getCurrentPlayer = () => {
+  return players.find(p => p.id === currentPlayerId.value) || { name: 'Неизвестно' }
 }
 
 const handleTestAction = (action) => {
@@ -364,12 +546,106 @@ const checkDevice = () => {
   isMobile.value = windowWidth.value < 768
 }
 
+// 🎯 СОХРАНЕНИЕ СОСТОЯНИЯ
+const saveGameState = () => {
+  const stateToSave = {
+    players: players.map(p => ({ ...p })),
+    gameState: { ...gameState },
+    readyCheck: { ...readyCheck },
+    playerCards: { ...playerCards }
+  }
+  localStorage.setItem('sekaGameState', JSON.stringify(stateToSave))
+  console.log('💾 Game state saved')
+}
+
+// 🎯 ЗАГРУЗКА СОСТОЯНИЯ
+const loadGameState = () => {
+  const saved = localStorage.getItem('sekaGameState')
+  if (saved) {
+    try {
+      const state = JSON.parse(saved)
+      
+      // Восстанавливаем игроков
+      players.splice(0, players.length, ...state.players)
+      
+      // Восстанавливаем состояние игры
+      Object.assign(gameState, state.gameState)
+      Object.assign(readyCheck, state.readyCheck)
+      
+      // 🔥 ИСПРАВЛЕНИЕ: Восстанавливаем карты, но ВСЕ закрываем
+      Object.keys(state.playerCards).forEach(playerId => {
+        playerCards[playerId] = state.playerCards[playerId].map(card => ({
+          ...card,
+          isVisible: false // ← ВСЕ КАРТЫ ЗАКРЫТЫ ПРИ ЗАГРУЗКЕ
+        }))
+      })
+      
+      console.log('💾 Game state loaded from storage')
+      console.log('⏱️ Remaining time:', readyCheck.timeRemaining)
+      return true
+    } catch (error) {
+      console.error('❌ Error loading game state:', error)
+      localStorage.removeItem('sekaGameState')
+    }
+  }
+  return false
+}
+
+// 🎯 ПРОДОЛЖЕНИЕ ТАЙМЕРА
+const continueReadyTimer = () => {
+  if (readyCheck.timer) {
+    clearInterval(readyCheck.timer)
+  }
+  
+  readyCheck.timer = setInterval(() => {
+    if (readyCheck.timeRemaining > 0) {
+      readyCheck.timeRemaining--
+      
+      players.forEach(player => {
+        if (player.id && player.readyTimeRemaining > 0) {
+          player.readyTimeRemaining--
+        }
+      })
+    } else {
+      handleReadyTimeout()
+    }
+  }, 1000)
+}
+
+const clearSave = () => {
+  localStorage.removeItem('sekaGameState')
+  location.reload()
+}
+
+// 🎯 АВТОСОХРАНЕНИЕ ПРИ ИЗМЕНЕНИЯХ
+watch([players, gameState, readyCheck], () => {
+  saveGameState()
+}, { deep: true, immediate: false })
+
 // 🎯 LIFECYCLE
 onMounted(() => {
   checkDevice()
   window.addEventListener('resize', checkDevice)
-  startReadyTimer()
-  console.log('🎮 SEKA инициализирована!')
+  
+  // Пытаемся загрузить сохраненное состояние
+  const stateLoaded = loadGameState()
+  
+  if (!stateLoaded) {
+    // Только если нет сохраненного состояния - запускаем новый таймер
+    console.log('🎮 Новая игра инициализирована!')
+    readyCheck.timeRemaining = 10
+    startReadyTimer()
+  } else {
+    console.log('🎮 Игра восстановлена из сохранения!')
+    
+    // Продолжаем таймер с сохраненного времени
+    if (gameState.status === 'waiting' && readyCheck.timeRemaining > 0) {
+      continueReadyTimer()
+    }
+  }
+  
+  // Для отладки
+  window.debugPlayers = players
 })
 
 onUnmounted(() => {
@@ -378,6 +654,7 @@ onUnmounted(() => {
     clearInterval(readyCheck.timer)
   }
 })
+
 </script>
 
 <style scoped>
@@ -419,6 +696,13 @@ onUnmounted(() => {
 
 .waiting-status {
   color: #68d391;
+}
+
+.timer-display {
+  font-size: 0.8rem;
+  color: #fbbf24;
+  margin-top: 4px;
+  font-weight: bold;
 }
 
 /* Адаптивность */
