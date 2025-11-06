@@ -5,6 +5,7 @@ namespace Tests\Unit\Application\Services;
 use Tests\TestCase;
 use App\Application\Services\QuarrelService;
 use App\Application\Services\DistributionService;
+use App\Application\Services\BiddingService;
 use App\Domain\Game\Rules\QuarrelRule;
 use App\Domain\Game\Entities\Game;
 use App\Domain\Game\ValueObjects\GameId;
@@ -13,23 +14,38 @@ use App\Domain\Game\Enums\GameMode;
 use App\Domain\Game\Entities\Player;
 use App\Domain\Game\ValueObjects\PlayerId;
 use App\Domain\Game\Enums\PlayerStatus;
+use Mockery;
 
 class QuarrelServiceTest extends TestCase
 {
     private QuarrelService $quarrelService;
-    private QuarrelRule $quarrelRule;
-    private DistributionService $distributionService;
+    private $quarrelRuleMock;
+    private $distributionServiceMock;
+    private $biddingServiceMock;
     
     protected function setUp(): void
     {
         parent::setUp();
         
-        $this->quarrelRule = new QuarrelRule();
-        $this->distributionService = new DistributionService();
+        // СОЗДАЕМ МОКИ всех зависимостей
+        $this->quarrelRuleMock = Mockery::mock(QuarrelRule::class);
+        $this->biddingServiceMock = Mockery::mock(BiddingService::class);
+        $this->distributionServiceMock = new DistributionService($this->biddingServiceMock);
+        
+        // НАСТРАИВАЕМ ОЖИДАНИЯ для методов, которые будут вызываться
+        $this->quarrelRuleMock->shouldReceive('calculateQuarrelEntryBet')
+            ->andReturn(100); // Возвращаем фиксированную ставку
+        
         $this->quarrelService = new QuarrelService(
-            $this->quarrelRule,
-            $this->distributionService
+            $this->quarrelRuleMock,
+            $this->distributionServiceMock
         );
+    }
+
+    protected function tearDown(): void
+    {
+        Mockery::close();
+        parent::tearDown();
     }
     
     /** @test */
@@ -41,14 +57,11 @@ class QuarrelServiceTest extends TestCase
             $this->createTestPlayer(2)
         ];
         
-        // Мокаем QuarrelRule чтобы всегда разрешать сварку
-        $mockQuarrelRule = $this->createMock(QuarrelRule::class);
-        $mockQuarrelRule->method('canInitiateQuarrel')->willReturn(true);
-        $mockQuarrelRule->method('winnersVoteForQuarrel')->willReturn(true);
+        // Настраиваем моки
+        $this->quarrelRuleMock->shouldReceive('canInitiateQuarrel')->andReturn(true);
+        $this->quarrelRuleMock->shouldReceive('winnersVoteForQuarrel')->andReturn(true);
         
-        $quarrelService = new QuarrelService($mockQuarrelRule, $this->distributionService);
-        
-        $result = $quarrelService->initiateQuarrel($game, $winningPlayers);
+        $result = $this->quarrelService->initiateQuarrel($game, $winningPlayers);
         
         $this->assertTrue($result);
     }
@@ -62,14 +75,11 @@ class QuarrelServiceTest extends TestCase
             $this->createTestPlayer(2)
         ];
         
-        // Мокаем QuarrelRule чтобы отклонять сварку
-        $mockQuarrelRule = $this->createMock(QuarrelRule::class);
-        $mockQuarrelRule->method('canInitiateQuarrel')->willReturn(true);
-        $mockQuarrelRule->method('winnersVoteForQuarrel')->willReturn(false);
+        // Настраиваем моки
+        $this->quarrelRuleMock->shouldReceive('canInitiateQuarrel')->andReturn(true);
+        $this->quarrelRuleMock->shouldReceive('winnersVoteForQuarrel')->andReturn(false);
         
-        $quarrelService = new QuarrelService($mockQuarrelRule, $this->distributionService);
-        
-        $result = $quarrelService->initiateQuarrel($game, $winningPlayers);
+        $result = $this->quarrelService->initiateQuarrel($game, $winningPlayers);
         
         $this->assertFalse($result);
     }
@@ -170,7 +180,7 @@ class QuarrelServiceTest extends TestCase
             GameStatus::ACTIVE,
             1,
             GameMode::OPEN,
-            1000 // банк
+            1000
         );
     }
     
@@ -205,4 +215,5 @@ class QuarrelServiceTest extends TestCase
             \App\Domain\Game\Enums\CardRank::from($rank)
         );
     }
+
 }
