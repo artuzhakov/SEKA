@@ -267,7 +267,9 @@ const getActionText = (action) => {
     'call': 'Поддержать', 
     'raise': 'Повысить',
     'fold': 'Пас',
-    'dark': 'Темная'
+    'dark': 'Темная',
+    'open': 'Открыть',
+    'reveal': 'Вскрыться'
   }
   return actions[action] || action
 }
@@ -430,8 +432,8 @@ const handlePlayerAction = (action) => {
 .player-position {
   position: absolute;
   z-index: 10;
-  width: 180px; /* ← УВЕЛИЧИВАЕМ с 140px */
-  min-height: 160px; /* ← ДОБАВЛЯЕМ минимальную высоту */
+  width: 220px;
+  min-height: 160px;
   transition: all 0.3s ease;
   display: flex;
   justify-content: center;
@@ -714,11 +716,11 @@ const handlePlayerAction = (action) => {
 }
 
 .mobile-card {
-  width: 60px;
-  height: 84px;
-  border-radius: 8px;
+  width: 80px;
+  height: 112px;
+  border-radius: 10px;
   overflow: hidden;
-  border: 2px solid #fff;
+  border: 3px solid #fff;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
@@ -731,15 +733,18 @@ const handlePlayerAction = (action) => {
   align-items: center;
   justify-content: center;
   font-weight: bold;
+  opacity: 1 !important;
 }
 
 .card-rank {
-  font-size: 1.2rem;
-  margin-bottom: 2px;
+  font-size: 1.6rem;
+  margin-bottom: 4px;
+  color: #1a202c;
 }
 
 .card-suit {
-  font-size: 1.5rem;
+  font-size: 2.2rem;
+  color: #1a202c;
 }
 
 .card-back-mobile {
@@ -750,7 +755,8 @@ const handlePlayerAction = (action) => {
   align-items: center;
   justify-content: center;
   color: white;
-  font-size: 1.5rem;
+  font-size: 2rem;
+  opacity: 1 !important;
 }
 
 /* Кнопки действий */
