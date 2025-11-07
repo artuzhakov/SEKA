@@ -158,7 +158,7 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
 // 🎯 PROTECTED ROUTES (Require authentication)
 Route::middleware('auth:sanctum')->group(function () {
     
-    // 🎯 SEKA Game Management Routes
+    // 🎯 SEKA Game Management Routes (основные маршруты)
     Route::prefix('seka')->group(function () {
         // 🎯 Game lifecycle
         Route::post('/start', [GameController::class, 'start']);
@@ -186,6 +186,10 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/{gameId}/timers', [GameController::class, 'getTimers']);
         Route::get('/{gameId}/test-players', [GameController::class, 'getTestPlayers']);
         Route::post('/{gameId}/check-timeouts', [GameController::class, 'checkTimeouts']);
+        
+        // 🎯 NEW: Маршруты для реального игрового процесса
+        Route::get('/{gameId}/state', [GameController::class, 'getGameState']); // Полное состояние для фронтенда
+        Route::post('/{gameId}/join', [GameController::class, 'joinGame']); // Присоединиться к игре
     });
 
     // 🎯 Legacy game routes (for compatibility)
@@ -201,9 +205,14 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/{game}/quarrel/start', [GameController::class, 'startQuarrel']);
         Route::post('/{game}/quarrel/resolve', [GameController::class, 'resolveQuarrel']);
         Route::post('/{game}/check-timeouts', [GameController::class, 'checkTimeouts']);
+        
+        // 🎯 NEW: Маршруты для интеграции с фронтендом
+        Route::get('/{game}/state', [GameController::class, 'getGameState']); // Полное состояние
+        Route::post('/{game}/actions', [GameController::class, 'performAction']); // Действия игрока
+        Route::post('/{game}/join', [GameController::class, 'joinGame']); // Присоединиться
     });
 
-    // 🎯 Real-time game events (WebSocket/Pusher)
+    // 🎯 Real-time game events (WebSocket/Pusher) - ТЕСТОВЫЕ МАРШРУТЫ
     Route::prefix('game')->group(function () {
         Route::post('/{gameId}/start', function (Request $request, $gameId) {
             broadcast(new \App\Events\GameStarted(

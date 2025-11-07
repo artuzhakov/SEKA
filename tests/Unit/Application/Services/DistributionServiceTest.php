@@ -66,9 +66,10 @@ class DistributionServiceTest extends TestCase
         foreach ($game->getActivePlayers() as $index => $player) {
             $initialCards = count($player->getCards());
             echo "Player {$index} initial cards: {$initialCards}\n";
+            $this->assertCount(0, $player->getCards(), "Player should have 0 cards before distribution");
         }
         
-        $this->distributionService->distributeCards($game);
+        $result = $this->distributionService->distributeCards($game);
         
         echo "After distribution - Active players: " . count($game->getActivePlayers()) . "\n";
         
@@ -76,14 +77,12 @@ class DistributionServiceTest extends TestCase
             $cardCount = count($player->getCards());
             echo "Player {$index} has {$cardCount} cards\n";
             
-            // Если карты все еще не раздаются, временно пропустим тест
-            if ($cardCount === 0) {
-                $this->markTestIncomplete('DistributionService.distributeCards() is not working - cards not being dealt to players');
-                return;
-            }
-            
             $this->assertCount(3, $player->getCards(), "Player should have 3 cards but has {$cardCount}");
         }
+        
+        // 🎯 Дополнительная проверка результата
+        $this->assertArrayHasKey('player_cards', $result);
+        $this->assertCount(3, $result['player_cards']);
     }
     
     /** @test */

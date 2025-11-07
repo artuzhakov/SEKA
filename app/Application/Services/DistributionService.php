@@ -19,7 +19,7 @@ class DistributionService
     ) {}
     
     /**
-     * 🎯 Раздать карты всем игрокам
+     * 🎯 Раздать карты всем игрокам с WebSocket событием
      */
     public function distributeCards(Game $game): array
     {
@@ -29,6 +29,7 @@ class DistributionService
         $deck = $this->createSimplifiedDeck();
         
         \Log::info("🎴 Created deck with " . count($deck) . " cards");
+        \Log::info("🎴 Active players: " . count($players));
         
         // 🎯 Раздаем по 3 карты каждому игроку
         $playerCards = [];
@@ -40,6 +41,9 @@ class DistributionService
                     $playerHand[] = $this->cardToArray($card);
                 }
             }
+            
+            // 🎯 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Сохраняем карты игроку
+            $player->receiveCards($playerHand);
             $playerCards[$player->getUserId()] = $playerHand;
             
             \Log::info("🎴 Player {$player->getUserId()} received " . count($playerHand) . " cards");
@@ -53,6 +57,14 @@ class DistributionService
         
         // 🎯 Сохраняем игру после раздачи
         $this->saveGame($game);
+        
+        // 🎯 Отправляем событие раздачи карт
+        event(new \App\Events\CardsDistributed(
+            gameId: $game->getId()->toInt(),
+            playerCards: $playerCards,
+            communityCards: [],
+            round: 'preflop'
+        ));
         
         \Log::info("🎴 Distribution complete. Status: " . $game->getStatus()->value);
         

@@ -1,106 +1,30 @@
+// resources/js/components/seka/composables/useGameActions.js
+
 import { ref } from 'vue'
+import { usePage } from '@inertiajs/vue3'
 import axios from 'axios'
 
 export function useGameActions(gameId) {
     const isActionLoading = ref(false)
     const lastError = ref(null)
 
-    // 🔄 ВАЛИДАЦИЯ ДЕЙСТВИЙ
-    const validateAction = (action, currentPlayerInfo, currentMaxBet, gameRound) => {
-        if (!currentPlayerInfo) {
-            return { isValid: false, error: 'Информация об игроке не найдена' }
-        }
-
-        // Проверки по раундам
-        const roundValidations = {
-            1: ['check', 'dark', 'fold', 'call', 'raise'],
-            2: ['reveal', 'fold', 'call', 'raise', 'open'],
-            3: ['fold', 'call', 'raise', 'open']
-        }
-
-        if (!roundValidations[gameRound]?.includes(action)) {
-            return { isValid: false, error: `Действие ${action} недоступно в раунде ${gameRound}` }
-        }
-
-        // Специфические проверки
-        const playerBet = currentPlayerInfo.currentBet || 0
-        const needsCall = currentMaxBet > playerBet
-
-        if (action === 'check' && needsCall) {
-            return { isValid: false, error: 'Нельзя проверить при активной ставке' }
-        }
-
-        if (action === 'call' && !needsCall) {
-            return { isValid: false, error: 'Нет активной ставки для поддержания' }
-        }
-
-        if (action === 'dark' && currentPlayerInfo.isDark) {
-            return { isValid: false, error: 'Вы уже играете в темную' }
-        }
-
-        if (action === 'reveal' && gameRound === 1) {
-            return { isValid: false, error: 'Вскрытие доступно только в раундах 2 и 3' }
-        }
-
-        if (action === 'open' && !currentPlayerInfo.isDark) {
-            return { isValid: false, error: 'Открытие доступно только после темной игры' }
-        }
-
-        return { isValid: true }
-    }
-
-    // 🔄 ВЫПОЛНЕНИЕ ДЕЙСТВИЯ С ВАЛИДАЦИЕЙ
-    const performAction = async (action, betAmount = null, gameState = null) => {
+    // 🔄 РЕАЛЬНЫЙ ВЫЗОВ API ДЛЯ ДЕЙСТВИЙ
+    // 🔄 ИСПОЛЬЗУЕМ СУЩЕСТВУЮЩИЙ МАРШРУТ /api/seka/{gameId}/action
+    const performAction = async (action, betAmount = null) => {
         isActionLoading.value = true
         lastError.value = null
         
         try {
-            const user = usePage().props.auth.user
-            
-            // Валидация на клиенте
-            if (gameState) {
-                const validation = validateAction(
-                    action, 
-                    gameState.currentPlayerInfo, 
-                    gameState.currentMaxBet,
-                    gameState.currentRound
-                )
-                
-                if (!validation.isValid) {
-                    throw new Error(validation.error)
-                }
-            }
+            console.log(`🎯 Performing action: ${action}`, { gameId, betAmount })
 
-            // Подготовка данных для API
-            const requestData = {
-                player_id: user.id,
-                action: action
-            }
+            const response = await axios.post(`/api/seka/${gameId}/action`, {
+                action: action,
+                bet_amount: betAmount
+            })
 
-            // Добавляем сумму ставки если нужно
-            if (action === 'raise' && betAmount !== null) {
-                requestData.bet_amount = betAmount
-            } else if (action === 'call') {
-                // Для call вычисляем сумму автоматически
-                const callAmount = gameState ? (gameState.currentMaxBet - (gameState.currentPlayerInfo?.currentBet || 0)) : 0
-                requestData.bet_amount = callAmount
-            } else if (action === 'dark') {
-                // Для dark - 50% от текущей ставки
-                const darkAmount = gameState ? Math.floor(gameState.currentMaxBet * 0.5) : 0
-                requestData.bet_amount = darkAmount
-            } else if (action === 'reveal') {
-                // Для reveal - удвоение ставки
-                const revealAmount = gameState ? (gameState.currentMaxBet * 2) : 0
-                requestData.bet_amount = revealAmount
-            }
-
-            console.log(`🎯 Performing action: ${action}`, requestData)
-
-            // 🔄 РЕАЛЬНЫЙ ЗАПРОС К API
-            const response = await axios.post(`/api/seka/${gameId}/action`, requestData)
+            console.log(`✅ Action ${action} completed:`, response.data)
 
             if (response.data.success) {
-                console.log(`✅ Action ${action} completed successfully`)
                 return response.data
             } else {
                 throw new Error(response.data.error || 'Unknown error from server')
@@ -108,21 +32,43 @@ export function useGameActions(gameId) {
 
         } catch (error) {
             console.error('❌ Action failed:', error)
-            lastError.value = error.response?.data?.error || error.message || 'Unknown error'
-            throw error
+            const errorMessage = error.response?.data?.message || 
+                               error.response?.data?.error || 
+                               error.message || 
+                               'Unknown error occurred'
+            
+            lastError.value = errorMessage
+            throw new Error(errorMessage)
         } finally {
             isActionLoading.value = false
         }
     }
 
-    // 🔄 ОТМЕТИТЬСЯ КАК ГОТОВЫЙ
+    // 🔄 СПЕЦИФИЧЕСКИЕ МЕТОДЫ ДЛЯ КАЖДОГО ДЕЙСТВИЯ SEKA
+    const check = () => performAction('check')
+    
+    const call = () => performAction('call')
+    
+    const raise = (amount) => {
+        if (!amount || amount <= 0) {
+            throw new Error('Amount is required for raise')
+        }
+        return performAction('raise', amount)
+    }
+    
+    const fold = () => performAction('fold')
+    
+    const playDark = () => performAction('dark')
+    
+    const playOpen = () => performAction('open')
+    
+    const reveal = () => performAction('reveal')
+
+    // 🔄 ДЕЙСТВИЯ ДЛЯ ЛОББИ
+    // 🔄 ИСПОЛЬЗУЕМ СУЩЕСТВУЮЩИЙ МАРШРУТ /api/seka/{gameId}/ready
     const markPlayerReady = async () => {
         try {
-            const user = usePage().props.auth.user
-            const response = await axios.post(`/api/seka/${gameId}/ready`, {
-                game_id: gameId,
-                player_id: user.id
-            })
+            const response = await axios.post(`/api/seka/${gameId}/ready`)
             return response.data
         } catch (error) {
             console.error('Ready action failed:', error)
@@ -131,29 +77,88 @@ export function useGameActions(gameId) {
         }
     }
 
-    // 🔄 ПОЛУЧИТЬ ИСТОРИЮ ДЕЙСТВИЙ
-    const getGameHistory = async () => {
+    const joinGame = async () => {
         try {
-            const response = await axios.get(`/api/seka/${gameId}/history`)
+            const response = await axios.post(`/api/seka/${gameId}/join`)
             return response.data
         } catch (error) {
-            console.error('Failed to get game history:', error)
+            console.error('Join game failed:', error)
+            lastError.value = error.response?.data?.error || error.message
             throw error
         }
     }
 
-    // 🔄 СБРОСИТЬ ОШИБКУ
+    // 🔄 ВАЛИДАЦИЯ ДЕЙСТВИЙ (КЛИЕНТСКАЯ)
+    const validateAction = (action, gameState, betAmount = null) => {
+        if (!gameState || !gameState.current_player_id) {
+            return { isValid: false, error: 'Game state not available' }
+        }
+
+        const user = usePage().props.auth.user
+        const currentPlayer = gameState.players?.find(p => p.user_id === user.id)
+        
+        if (!currentPlayer) {
+            return { isValid: false, error: 'Player not found in game' }
+        }
+
+        if (gameState.current_player_id !== user.id) {
+            return { isValid: false, error: 'Not your turn' }
+        }
+
+        // Проверки для конкретных действий
+        switch (action) {
+            case 'raise':
+                if (!betAmount || betAmount <= 0) {
+                    return { isValid: false, error: 'Bet amount required for raise' }
+                }
+                if (betAmount > currentPlayer.balance) {
+                    return { isValid: false, error: 'Insufficient balance' }
+                }
+                break;
+
+            case 'call':
+                const callAmount = gameState.current_max_bet - (currentPlayer.current_bet || 0)
+                if (callAmount > currentPlayer.balance) {
+                    return { isValid: false, error: 'Insufficient balance for call' }
+                }
+                break;
+
+            case 'reveal':
+                const revealAmount = gameState.current_max_bet * 2
+                if (revealAmount > currentPlayer.balance) {
+                    return { isValid: false, error: 'Insufficient balance for reveal' }
+                }
+                break;
+        }
+
+        return { isValid: true }
+    }
+
+    // 🔄 СБРОС ОШИБКИ
     const clearError = () => {
         lastError.value = null
     }
 
     return {
+        // Состояние
         isActionLoading,
         lastError,
-        performAction,
+        
+        // Действия игры
+        check,
+        call,
+        raise,
+        fold,
+        playDark,
+        playOpen,
+        reveal,
+        
+        // Действия лобби
         markPlayerReady,
-        getGameHistory,
-        clearError,
-        validateAction
+        joinGame,
+        
+        // Вспомогательные методы
+        validateAction,
+        clearError
     }
 }

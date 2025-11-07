@@ -9,24 +9,30 @@ use App\Domain\Game\Entities\Player;
 use App\Domain\Game\Enums\PlayerAction;
 use App\Domain\Game\Enums\PlayerStatus;
 use App\Domain\Game\Enums\GameStatus;
+use App\Events\PlayerActionTaken;
+use App\Events\BiddingRoundStarted;
+use App\Events\TurnChanged;
 use DomainException;
 
 class BiddingService
 {
     
     /**
-     * 🎯 Обработать действие игрока в торгах (ВЕРСИЯ С ДЕТАЛЬНЫМ ЛОГИРОВАНИЕМ)
+     * 🎯 Обработать действие игрока в торгах с WebSocket событиями
      */
     public function processPlayerAction(
         Game $game, 
         Player $player, 
         PlayerAction $action, 
         ?int $betAmount = null
-    ): void {
+    ): array {
         \Log::info("🎯 === BIDDING ACTION START ===");
         \Log::info("🎯 Game: {$game->getId()->toInt()}, Status: {$game->getStatus()->value}");
         \Log::info("🎯 Current Player Position Before: {$game->getCurrentPlayerPosition()}");
         \Log::info("🎯 Action: {$action->value}, Bet: " . ($betAmount ?? 'null'));
+        
+        // Сохраняем предыдущего игрока для события TurnChanged
+        $previousPlayerPosition = $game->getCurrentPlayerPosition();
         
         try {
             // 🎯 Проверяем что игрок может сделать ход
@@ -60,6 +66,22 @@ class BiddingService
 
             \Log::info("✅ Successfully processed action: {$action->value}");
 
+            // 🎯 Получаем обновленное состояние для WebSocket событий
+            $gameState = $this->getGameStateForEvent($game);
+            $availableActions = $this->getAvailableActions($game, $player);
+
+            // 🎯 Отправляем событие действия игрока
+            event(new \App\Events\PlayerActionTaken(
+                gameId: $game->getId()->toInt(),
+                playerId: $player->getUserId(),
+                action: $action->value,
+                betAmount: $betAmount,
+                newPlayerPosition: $game->getCurrentPlayerPosition(),
+                bank: $game->getBank(),
+                gameState: $gameState,
+                availableActions: $availableActions
+            ));
+
             // 🎯 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Проверяем статус игры перед переходом к следующему игроку
             if ($game->getStatus() === GameStatus::BIDDING) {
                 $activePlayers = $game->getActivePlayers();
@@ -69,6 +91,19 @@ class BiddingService
                 if (count($activePlayers) > 1) {
                     $this->moveToNextPlayer($game);
                     \Log::info("✅ Moved to next player. New position: {$game->getCurrentPlayerPosition()}");
+                    
+                    // 🎯 Отправляем событие смены хода если игрок сменился
+                    if ($previousPlayerPosition !== $game->getCurrentPlayerPosition()) {
+                        $currentPlayer = $this->getCurrentPlayer($game);
+                        if ($currentPlayer) {
+                            event(new \App\Events\TurnChanged(
+                                gameId: $game->getId()->toInt(),
+                                previousPlayerId: $this->findPlayerByPosition($game, $previousPlayerPosition)?->getUserId() ?? 0,
+                                currentPlayerId: $currentPlayer->getUserId(),
+                                turnTimeLeft: 30
+                            ));
+                        }
+                    }
                 } else {
                     \Log::info("🎯 Game round ending - skipping move to next player");
                     $this->endBiddingRound($game);
@@ -78,6 +113,12 @@ class BiddingService
             }
 
             \Log::info("🎯 === BIDDING ACTION END ===\n");
+
+            return [
+                'success' => true,
+                'game_state' => $gameState,
+                'available_actions' => $availableActions
+            ];
 
         } catch (\Exception $e) {
             \Log::error("❌ BIDDING ACTION FAILED for player {$player->getUserId()}");
@@ -319,7 +360,7 @@ class BiddingService
     }
 
     /**
-     * 🎯 Завершение раунда торгов
+     * 🎯 Завершение раунда торгов с событиями
      */
     private function endBiddingRound(Game $game): void
     {
@@ -329,17 +370,36 @@ class BiddingService
         
         if (count($activePlayers) === 1) {
             // Один игрок остался - автоматическая победа
-            $winner = array_values($activePlayers)[0]; // 🎯 ИСПРАВЛЕНИЕ: Переиндексируем массив
-            // $game->setWinner($winner); // 🎯 ЗАКОММЕНТИРУЕМ - метода пока нет
+            $winner = array_values($activePlayers)[0];
             $game->setStatus(GameStatus::FINISHED);
+            
+            // 🎯 Отправляем событие завершения игры
+            event(new \App\Events\GameFinished(
+                gameId: $game->getId()->toInt(),
+                winnerId: $winner->getUserId(),
+                scores: [$winner->getUserId() => 0], // Можно добавить реальные очки
+                finalState: $this->getGameStateForEvent($game)
+            ));
+            
             \Log::info("🎉 Player {$winner->getUserId()} wins automatically!");
         } elseif (count($activePlayers) > 1) {
             // Несколько игроков осталось - переход к сравнению карт
             $game->setStatus(GameStatus::COMPARISON);
             \Log::info("🔍 Multiple players remain - moving to card comparison");
+            
+            // 🎯 Здесь можно добавить событие для сравнения карт
         } else {
             // Нет активных игроков - ничья
             $game->setStatus(GameStatus::FINISHED);
+            
+            // 🎯 Отправляем событие завершения игры без победителя
+            event(new \App\Events\GameFinished(
+                gameId: $game->getId()->toInt(),
+                winnerId: 0, // Нет победителя
+                scores: [],
+                finalState: $this->getGameStateForEvent($game)
+            ));
+            
             \Log::info("🤝 No active players - game ended in draw");
         }
         
@@ -442,13 +502,16 @@ class BiddingService
         
         \Log::info("🔍 getAvailableActions - Round: {$currentRound}, MaxBet: {$currentMaxBet}, PlayerBet: {$playerBet}");
 
-        $actions = [PlayerAction::FOLD, PlayerAction::CALL, PlayerAction::RAISE, PlayerAction::OPEN];
+        $actions = [PlayerAction::FOLD, PlayerAction::CALL, PlayerAction::RAISE];
         
-        // 🎯 CHECK доступен если нет ставок для уравнивания
-        if ($currentMaxBet === $playerBet) {
+        // 🎯 ИСПРАВЛЕНИЕ: CHECK доступен только если нет ставок для уравнивания И это разрешено в текущем раунде
+        if ($currentMaxBet === $playerBet && $this->canCheckInRound($currentRound, $player)) {
             $actions[] = PlayerAction::CHECK;
-            \Log::info("✅ CHECK added - no bet to call");
+            \Log::info("✅ CHECK added - no bet to call and allowed in round {$currentRound}");
         }
+        
+        // 🎯 OPEN всегда доступен (но может быть заблокирован другими условиями)
+        $actions[] = PlayerAction::OPEN;
         
         // 🎯 DARK доступен в круге 1 если игрок еще не играл в темную
         if ($currentRound === 1 && !$player->hasPlayedDark()) {
@@ -466,6 +529,25 @@ class BiddingService
         \Log::info("🎯 Final available actions: " . implode(', ', $actionValues));
         
         return $actions;
+    }
+
+    /**
+     * 🎯 Проверить можно ли CHECK в данном раунде
+     */
+    private function canCheckInRound(int $round, Player $player): bool
+    {
+        // В раунде 1 CHECK всегда доступен если нет ставок
+        if ($round === 1) {
+            return true;
+        }
+        
+        // В раундах 2-3 CHECK доступен только если игрок не играл в темную
+        // или уже открыл карты после темной игры
+        if ($round >= 2) {
+            return !$player->hasPlayedDark() || $player->getStatus() !== PlayerStatus::DARK;
+        }
+        
+        return true;
     }
 
     /**
@@ -560,7 +642,7 @@ class BiddingService
     }
 
     /**
-     * 🎯 Запустить раунд торгов (ИСПРАВЛЕННАЯ ВЕРСИЯ)
+     * 🎯 Запустить раунд торгов с WebSocket событием
      */
     public function startBiddingRound(Game $game): void
     {
@@ -598,7 +680,50 @@ class BiddingService
         // 🎯 Обновляем статус игры на BIDDING
         $game->startBidding();
         
+        // 🎯 Отправляем событие начала раунда торгов
+        $currentPlayer = $this->getCurrentPlayer($game);
+        if ($currentPlayer) {
+            event(new \App\Events\BiddingRoundStarted(
+                gameId: $game->getId()->toInt(),
+                roundNumber: $game->getCurrentRound(),
+                currentPlayerPosition: $game->getCurrentPlayerPosition(),
+                availableActions: $this->getAvailableActions($game, $currentPlayer),
+                currentMaxBet: $game->getCurrentMaxBet()
+            ));
+        }
+        
         \Log::info("🎯 BiddingService: Round started. First player: {$firstPlayerPosition}, Bank: {$currentBank}, Max bet: {$currentMaxBet}");
+    }
+
+    /**
+     * 🎯 Получить состояние игры для WebSocket событий
+     */
+    private function getGameStateForEvent(Game $game): array
+    {
+        $playersData = [];
+        foreach ($game->getPlayers() as $player) {
+            $playersData[] = [
+                'id' => $player->getUserId(),
+                'position' => $player->getPosition(),
+                'status' => $player->getStatus()->value,
+                'balance' => $player->getBalance(),
+                'current_bet' => $player->getCurrentBet(),
+                'has_checked' => $player->hasChecked(),
+                'has_played_dark' => $player->hasPlayedDark(),
+                'cards_count' => count($player->getCards())
+            ];
+        }
+        
+        return [
+            'game_id' => $game->getId()->toInt(),
+            'status' => $game->getStatus()->value,
+            'current_round' => $game->getCurrentRound(),
+            'current_player_position' => $game->getCurrentPlayerPosition(),
+            'current_max_bet' => $game->getCurrentMaxBet(),
+            'bank' => $game->getBank(),
+            'players' => $playersData,
+            'active_players_count' => count($game->getActivePlayers())
+        ];
     }
 
 }

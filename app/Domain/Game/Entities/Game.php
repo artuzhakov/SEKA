@@ -236,24 +236,41 @@ class Game
      */
     public function getPlayerRightOfDealer(): ?Player
     {
-        $dealerPosition = $this->getCurrentPlayerPosition();
+        $dealerPosition = $this->getDealerPosition(); // 🎯 ИСПРАВЛЕНИЕ: используем dealerPosition
         if (!$dealerPosition) {
+            \Log::info("❌ No dealer position set");
             return null;
         }
         
-        $positions = array_map(fn($player) => $player->getPosition(), $this->players);
+        $activePlayers = $this->getActivePlayers();
+        if (empty($activePlayers)) {
+            \Log::info("❌ No active players");
+            return null;
+        }
+        
+        // Сортируем позиции активных игроков
+        $positions = array_map(fn($player) => $player->getPosition(), $activePlayers);
         sort($positions);
         
+        \Log::info("🔍 Dealer position: {$dealerPosition}, Active positions: " . implode(', ', $positions));
+        
+        // Находим индекс дилера среди активных игроков
         $currentIndex = array_search($dealerPosition, $positions);
         if ($currentIndex === false) {
-            return null;
+            \Log::info("❌ Dealer not found in active players");
+            // Если дилер не активен, начинаем с первого активного игрока
+            return $activePlayers[0] ?? null;
         }
         
+        // Переходим к следующему игроку по кругу
         $nextIndex = ($currentIndex + 1) % count($positions);
         $nextPosition = $positions[$nextIndex];
         
-        foreach ($this->players as $player) {
-            if ($player->getPosition() === $nextPosition && $player->isPlaying()) {
+        \Log::info("✅ Next player position: {$nextPosition}");
+        
+        // Находим игрока по позиции
+        foreach ($activePlayers as $player) {
+            if ($player->getPosition() === $nextPosition) {
                 return $player;
             }
         }
