@@ -147,6 +147,12 @@ Route::prefix('test')->group(function () {
                 'message' => 'Cards distributed'
             ]);
         });
+
+        // 🎯 NEW: Public test routes for new endpoints
+        Route::get('/games/joinable', [GameController::class, 'listJoinableGames']);
+        Route::post('/{gameId}/join', [GameController::class, 'joinGame']);
+        Route::post('/{gameId}/leave', [GameController::class, 'leaveGame']);
+        Route::get('/{gameId}/state', [GameController::class, 'getGameState']);
     });
 });
 
@@ -160,6 +166,12 @@ Route::middleware('auth:sanctum')->group(function () {
     
     // 🎯 SEKA Game Management Routes (основные маршруты)
     Route::prefix('seka')->group(function () {
+        // 🎯 NEW: Game joining and listing routes
+        Route::get('/games/joinable', [GameController::class, 'listJoinableGames']);
+        Route::post('/{gameId}/join', [GameController::class, 'joinGame']);
+        Route::post('/{gameId}/leave', [GameController::class, 'leaveGame']);
+        Route::get('/{gameId}/state', [GameController::class, 'getGameState']);
+        
         // 🎯 Game lifecycle
         Route::post('/start', [GameController::class, 'start']);
         Route::post('/{gameId}/finish', [GameController::class, 'finish']);
@@ -186,14 +198,15 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/{gameId}/timers', [GameController::class, 'getTimers']);
         Route::get('/{gameId}/test-players', [GameController::class, 'getTestPlayers']);
         Route::post('/{gameId}/check-timeouts', [GameController::class, 'checkTimeouts']);
-        
-        // 🎯 NEW: Маршруты для реального игрового процесса
-        Route::get('/{gameId}/state', [GameController::class, 'getGameState']); // Полное состояние для фронтенда
-        Route::post('/{gameId}/join', [GameController::class, 'joinGame']); // Присоединиться к игре
     });
 
     // 🎯 Legacy game routes (for compatibility)
     Route::prefix('games')->group(function () {
+        // 🎯 NEW: Маршруты для интеграции с фронтендом
+        Route::get('/{game}/state', [GameController::class, 'getGameState']); // Полное состояние
+        Route::post('/{game}/join', [GameController::class, 'joinGame']); // Присоединиться
+        Route::post('/{game}/leave', [GameController::class, 'leaveGame']); // Покинуть игру
+        
         Route::post('/start', [GameController::class, 'start']);
         Route::get('/{game}/status', [GameController::class, 'getStatus']);
         Route::post('/{game}/ready', [GameController::class, 'markReady']);
@@ -205,11 +218,6 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/{game}/quarrel/start', [GameController::class, 'startQuarrel']);
         Route::post('/{game}/quarrel/resolve', [GameController::class, 'resolveQuarrel']);
         Route::post('/{game}/check-timeouts', [GameController::class, 'checkTimeouts']);
-        
-        // 🎯 NEW: Маршруты для интеграции с фронтендом
-        Route::get('/{game}/state', [GameController::class, 'getGameState']); // Полное состояние
-        Route::post('/{game}/actions', [GameController::class, 'performAction']); // Действия игрока
-        Route::post('/{game}/join', [GameController::class, 'joinGame']); // Присоединиться
     });
 
     // 🎯 Real-time game events (WebSocket/Pusher) - ТЕСТОВЫЕ МАРШРУТЫ

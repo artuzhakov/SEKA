@@ -9,7 +9,6 @@ export function useGameActions(gameId) {
     const lastError = ref(null)
 
     // 🔄 РЕАЛЬНЫЙ ВЫЗОВ API ДЛЯ ДЕЙСТВИЙ
-    // 🔄 ИСПОЛЬЗУЕМ СУЩЕСТВУЮЩИЙ МАРШРУТ /api/seka/{gameId}/action
     const performAction = async (action, betAmount = null) => {
         isActionLoading.value = true
         lastError.value = null
@@ -17,7 +16,10 @@ export function useGameActions(gameId) {
         try {
             console.log(`🎯 Performing action: ${action}`, { gameId, betAmount })
 
+            const user = usePage().props.auth.user
+            
             const response = await axios.post(`/api/seka/${gameId}/action`, {
+                player_id: user.id, // Добавляем player_id
                 action: action,
                 bet_amount: betAmount
             })
@@ -27,7 +29,7 @@ export function useGameActions(gameId) {
             if (response.data.success) {
                 return response.data
             } else {
-                throw new Error(response.data.error || 'Unknown error from server')
+                throw new Error(response.data.message || 'Unknown error from server')
             }
 
         } catch (error) {
@@ -64,38 +66,61 @@ export function useGameActions(gameId) {
     
     const reveal = () => performAction('reveal')
 
-    // 🔄 ДЕЙСТВИЯ ДЛЯ ЛОББИ
-    // 🔄 ИСПОЛЬЗУЕМ СУЩЕСТВУЮЩИЙ МАРШРУТ /api/seka/{gameId}/ready
+    // 🔄 ДЕЙСТВИЯ ДЛЯ ЛОББИ (ОБНОВЛЕННЫЕ)
     const markPlayerReady = async () => {
         try {
-            const response = await axios.post(`/api/seka/${gameId}/ready`)
+            const user = usePage().props.auth.user
+            const response = await axios.post(`/api/seka/${gameId}/ready`, {
+                player_id: user.id,
+                game_id: gameId
+            })
             return response.data
         } catch (error) {
             console.error('Ready action failed:', error)
-            lastError.value = error.response?.data?.error || error.message
+            lastError.value = error.response?.data?.message || error.message
             throw error
         }
     }
 
-    const joinGame = async () => {
+    // 🔄 ПРИСОЕДИНЕНИЕ К ИГРЕ (ОБНОВЛЕННОЕ)
+    const joinGame = async (playerName = null) => {
         try {
-            const response = await axios.post(`/api/seka/${gameId}/join`)
+            const user = usePage().props.auth.user
+            const response = await axios.post(`/api/seka/${gameId}/join`, {
+                user_id: user.id,
+                player_name: playerName
+            })
             return response.data
         } catch (error) {
             console.error('Join game failed:', error)
-            lastError.value = error.response?.data?.error || error.message
+            lastError.value = error.response?.data?.message || error.message
             throw error
         }
     }
 
-    // 🔄 ВАЛИДАЦИЯ ДЕЙСТВИЙ (КЛИЕНТСКАЯ)
+    // 🔄 ПОКИНУТЬ ИГРУ (НОВЫЙ МЕТОД)
+    const leaveGame = async () => {
+        try {
+            const user = usePage().props.auth.user
+            const response = await axios.post(`/api/seka/${gameId}/leave`, {
+                user_id: user.id
+            })
+            return response.data
+        } catch (error) {
+            console.error('Leave game failed:', error)
+            lastError.value = error.response?.data?.message || error.message
+            throw error
+        }
+    }
+
+    // 🔄 ВАЛИДАЦИЯ ДЕЙСТВИЙ (ОБНОВЛЕННАЯ)
     const validateAction = (action, gameState, betAmount = null) => {
         if (!gameState || !gameState.current_player_id) {
             return { isValid: false, error: 'Game state not available' }
         }
 
         const user = usePage().props.auth.user
-        const currentPlayer = gameState.players?.find(p => p.user_id === user.id)
+        const currentPlayer = gameState.players_list?.find(p => p.id === user.id)
         
         if (!currentPlayer) {
             return { isValid: false, error: 'Player not found in game' }
@@ -129,6 +154,15 @@ export function useGameActions(gameId) {
                     return { isValid: false, error: 'Insufficient balance for reveal' }
                 }
                 break;
+                
+            case 'dark':
+                if (gameState.current_round >= 3) {
+                    return { isValid: false, error: 'Dark play not available in round 3' }
+                }
+                if (currentPlayer.is_playing_dark) {
+                    return { isValid: false, error: 'Already playing dark' }
+                }
+                break;
         }
 
         return { isValid: true }
@@ -156,6 +190,7 @@ export function useGameActions(gameId) {
         // Действия лобби
         markPlayerReady,
         joinGame,
+        leaveGame,
         
         // Вспомогательные методы
         validateAction,

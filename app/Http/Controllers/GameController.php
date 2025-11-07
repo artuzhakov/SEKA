@@ -5,7 +5,6 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
-// use App\Domain\Game\Repositories\TestGameRepository;
 use App\Domain\Game\Entities\Game;
 use App\Domain\Game\Repositories\InMemoryGameRepository;
 use App\Application\Services\GameService;
@@ -18,11 +17,14 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use App\Events\GameStarted;
 use App\Events\PlayerReady;
+use App\Events\PlayerJoined;
 use App\Domain\Game\Enums\GameStatus;
 use App\Events\PlayerActionTaken;
 use App\Events\CardsDistributed;
 use App\Events\GameFinished;
 use Illuminate\Support\Facades\Auth;
+use App\Domain\Game\ValueObjects\GameId;
+use App\Domain\Game\ValueObjects\PlayerId;
 
 class GameController extends Controller
 {
@@ -934,31 +936,253 @@ class GameController extends Controller
     }
 
     /**
-     * 🎯 Получить полное состояние игры с информацией о текущем игроке
+     * 🎯 ПОЛУЧИТЬ ПОЛНОЕ СОСТОЯНИЕ ИГРЫ
      */
-    public function getGameState($gameId)
+    public function getGameState(int $gameId): JsonResponse
     {
         try {
             $game = $this->getGameById($gameId);
-            
+            $currentPlayer = $this->getCurrentPlayerFromGame($game);
+
+            \Log::info("🎮 Getting full game state", [
+                'game_id' => $gameId,
+                'status' => $game->getStatus()->value,
+                'current_player_position' => $game->getCurrentPlayerPosition(),
+                'players_count' => count($game->getPlayers())
+            ]);
+
+            $state = [
+                'id' => $gameId,
+                'status' => $game->getStatus()->value,
+                'current_player_position' => $game->getCurrentPlayerPosition(),
+                'current_player_id' => $currentPlayer ? $currentPlayer->getUserId() : null,
+                'bank' => $game->getBank(),
+                'max_bet' => $game->getCurrentMaxBet(),
+                'round' => $game->getCurrentRound(),
+                'players_list' => $this->formatPlayersListForEvent($game), // Единый формат
+                'current_player_actions' => $this->getAvailableActionsForCurrentPlayer($game),
+                'community_cards' => $this->getCommunityCards($game),
+                'timers' => $this->getTimersInfo($game),
+                'game_phase' => $this->getGamePhase($game),
+                'timestamp' => now()->toISOString()
+            ];
+
             return response()->json([
-                'status' => 'success',
+                'success' => true,
+                'game' => $state
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error("❌ Failed to get game state", [
+                'game_id' => $gameId,
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to get game state: ' . $e->getMessage()
+            ], 400);
+        }
+    }
+
+    /**
+     * 🎯 ПРИСОЕДИНИТЬСЯ К ИГРЕ (новый метод)
+     */
+    public function joinGame(Request $request, int $gameId): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'user_id' => 'required|integer|min:1',
+                'player_name' => 'sometimes|string|max:50'
+            ]);
+
+            $userId = (int)$validated['user_id'];
+            $playerName = $validated['player_name'] ?? "Player_{$userId}";
+
+            $game = $this->getGameById($gameId);
+
+            \Log::info("🎮 Player joining game", [
+                'game_id' => $gameId,
+                'user_id' => $userId,
+                'current_status' => $game->getStatus()->value,
+                'current_players' => count($game->getPlayers())
+            ]);
+
+            // Проверяем, можно ли присоединиться к игре
+            if (!$this->canJoinGame($game)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Cannot join game. Current status: ' . $game->getStatus()->value
+                ], 400);
+            }
+
+            // Проверяем, не присоединен ли уже игрок
+            if ($this->isPlayerAlreadyJoined($game, $userId)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Player already joined this game'
+                ], 400);
+            }
+
+            // Проверяем максимальное количество игроков
+            if (count($game->getPlayers()) >= 6) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Game is full (max 6 players)'
+                ], 400);
+            }
+
+            // Добавляем игрока в игру
+            $player = $this->gameService->addPlayerToGame($game, $userId, $playerName);
+
+            // Форматируем данные для события
+            $playerData = [
+                'id' => $userId,
+                'name' => $playerName,
+                'position' => $player->getPosition(),
+                'balance' => $player->getBalance(),
+                'is_ready' => $player->isReady(),
+                'joined_at' => now()->toISOString()
+            ];
+
+            // Форматируем список всех игроков
+            $playersList = $this->formatPlayersListForEvent($game);
+
+            \Log::info("🎮 Player successfully joined", [
+                'game_id' => $gameId,
+                'user_id' => $userId,
+                'player_position' => $player->getPosition(),
+                'new_players_count' => count($game->getPlayers())
+            ]);
+
+            // Отправляем WebSocket событие ВАШЕГО формата
+            broadcast(new \App\Events\PlayerJoined(
+                gameId: $gameId,
+                player: $playerData,
+                playersList: $playersList,
+                currentPlayersCount: count($game->getPlayers())
+            ));
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Successfully joined the game',
+                'player' => $playerData,
                 'game' => [
-                    'id' => $game->getId()->toInt(),
+                    'id' => $gameId,
                     'status' => $game->getStatus()->value,
-                    'current_player_position' => $game->getCurrentPlayerPosition(),
-                    'bank' => $game->getBank(),
-                    'max_bet' => $game->getCurrentMaxBet(),
-                    'round' => $game->getCurrentRound(),
-                    'players' => $this->formatPlayersState($game),
-                    'current_player_actions' => $this->getAvailableActionsForCurrentPlayer($game)
+                    'players_count' => count($game->getPlayers()),
+                    'max_players' => 6,
+                    'players_list' => $playersList
                 ]
             ]);
-            
+
         } catch (\Exception $e) {
+            \Log::error("❌ Failed to join game", [
+                'game_id' => $gameId,
+                'user_id' => $userId ?? 'unknown',
+                'error' => $e->getMessage()
+            ]);
+
             return response()->json([
-                'status' => 'error',
-                'message' => $e->getMessage()
+                'success' => false,
+                'message' => 'Failed to join game: ' . $e->getMessage()
+            ], 400);
+        }
+    }
+
+    /**
+     * 🎯 ПОКИНУТЬ ИГРУ (новый метод)
+     */
+    public function leaveGame(Request $request, int $gameId): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'user_id' => 'required|integer|min:1'
+            ]);
+
+            $userId = (int)$validated['user_id'];
+            $game = $this->getGameById($gameId);
+
+            \Log::info("🎮 Player leaving game", [
+                'game_id' => $gameId,
+                'user_id' => $userId
+            ]);
+
+            // Удаляем игрока из игры
+            $this->gameService->removePlayerFromGame($game, $userId);
+
+            \Log::info("🎮 Player successfully left", [
+                'game_id' => $gameId,
+                'user_id' => $userId,
+                'remaining_players' => count($game->getPlayers())
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Successfully left the game',
+                'remaining_players' => count($game->getPlayers())
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error("❌ Failed to leave game", [
+                'game_id' => $gameId,
+                'user_id' => $userId ?? 'unknown',
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to leave game: ' . $e->getMessage()
+            ], 400);
+        }
+    }
+
+    /**
+     * 🎯 СПИСОК ИГР ДЛЯ ПРИСОЕДИНЕНИЯ (новый метод)
+     */
+    public function listJoinableGames(): JsonResponse
+    {
+        try {
+            $repository = new \App\Domain\Game\Repositories\CachedGameRepository();
+            
+            // Получаем все игры в статусе ожидания
+            $games = $repository->findAll()->filter(function($game) {
+                return $game->getStatus() === GameStatus::WAITING;
+            });
+
+            $formattedGames = [];
+            foreach ($games as $game) {
+                $players = $game->getPlayers();
+                $formattedGames[] = [
+                    'id' => $game->getId()->toInt(),
+                    'status' => $game->getStatus()->value,
+                    'players_count' => count($players),
+                    'max_players' => 6,
+                    'created_at' => $game->getCreatedAt()?->toISOString(),
+                    'players' => array_map(function($player) {
+                        return [
+                            'id' => $player->getUserId(),
+                            'name' => "Player_" . $player->getUserId(),
+                            'is_ready' => $player->isReady()
+                        ];
+                    }, $players)
+                ];
+            }
+
+            return response()->json([
+                'success' => true,
+                'games' => $formattedGames,
+                'total' => count($formattedGames)
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error("❌ Failed to list joinable games", [
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to list games: ' . $e->getMessage()
             ], 400);
         }
     }
@@ -989,7 +1213,7 @@ class GameController extends Controller
     /**
      * 🎯 Получить доступные действия для текущего игрока
      */
-    private function getAvailableActionsForCurrentPlayer($game)
+    private function getAvailableActionsForCurrentPlayer(Game $game): array
     {
         $currentPlayer = $this->getCurrentPlayerFromGame($game);
         if (!$currentPlayer) {
@@ -1008,7 +1232,7 @@ class GameController extends Controller
     /**
      * 🎯 Получить текущего игрока из игры
      */
-    private function getCurrentPlayerFromGame($game)
+    private function getCurrentPlayerFromGame(Game $game)
     {
         $currentPosition = $game->getCurrentPlayerPosition();
         foreach ($game->getPlayers() as $player) {
@@ -1156,6 +1380,132 @@ class GameController extends Controller
                 'message' => $e->getMessage()
             ], 400);
         }
+    }
+
+    // ==================== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ====================
+
+    /**
+     * 🎯 Проверить, можно ли присоединиться к игре
+     */
+    private function canJoinGame(Game $game): bool
+    {
+        return $game->getStatus() === GameStatus::WAITING;
+    }
+
+    /**
+     * 🎯 Проверить, присоединен ли уже игрок
+     */
+    private function isPlayerAlreadyJoined(Game $game, int $userId): bool
+    {
+        foreach ($game->getPlayers() as $player) {
+            $playerUserId = $player->getUserId();
+            
+            if (is_object($playerUserId) && method_exists($playerUserId, 'toInt')) {
+                if ($playerUserId->toInt() === $userId) {
+                    return true;
+                }
+            } elseif ((int)$playerUserId === $userId) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+
+    /**
+     * 🎯 Форматировать игроков для состояния игры
+     */
+    private function formatPlayersForState(Game $game): array
+    {
+        $players = [];
+        
+        foreach ($game->getPlayers() as $player) {
+            $playerData = [
+                'id' => $player->getUserId(),
+                'position' => $player->getPosition(),
+                'name' => "Player_" . $player->getUserId(),
+                'chips' => $player->getBalance(),
+                'current_bet' => $player->getCurrentBet(),
+                'is_playing' => $player->isPlaying(),
+                'is_playing_dark' => $player->getStatus() === \App\Domain\Game\Enums\PlayerStatus::DARK,
+                'has_folded' => $player->getStatus() === \App\Domain\Game\Enums\PlayerStatus::FOLDED,
+                'is_current_turn' => $player->getPosition() === $game->getCurrentPlayerPosition(),
+                'status' => $player->getStatus()->value,
+                'is_ready' => $player->isReady(),
+                'cards_count' => count($player->getCards()),
+                'total_bet' => $player->getTotalBet()
+            ];
+
+            // Добавляем карты, если игра началась и игрок не играет втемную
+            if ($game->getStatus() === GameStatus::ACTIVE && 
+                $player->getStatus() !== \App\Domain\Game\Enums\PlayerStatus::DARK) {
+                $playerData['cards'] = array_map([$this, 'formatCard'], $player->getCards());
+            }
+
+            $players[] = $playerData;
+        }
+        
+        return $players;
+    }
+
+    /**
+     * 🎯 Получить общие карты
+     */
+    private function getCommunityCards(Game $game): array
+    {
+        // Если в вашей игре есть общие карты (как в покере)
+        if (method_exists($game, 'getCommunityCards')) {
+            return array_map([$this, 'formatCard'], $game->getCommunityCards());
+        }
+        
+        return [];
+    }
+
+    /**
+     * 🎯 Получить информацию о таймерах
+     */
+    private function getTimersInfo(Game $game): array
+    {
+        return [
+            'turn_timeout' => 30, // секунд на ход
+            'ready_timeout' => 10, // секунд на готовность
+            'action_timeout' => 25, // секунд на действие
+            'current_turn_started_at' => now()->toISOString()
+        ];
+    }
+
+    /**
+     * 🎯 Получить фазу игры
+     */
+    private function getGamePhase(Game $game): string
+    {
+        $status = $game->getStatus();
+        
+        return match($status) {
+            GameStatus::WAITING => 'waiting_for_players',
+            GameStatus::ACTIVE => 'bidding_round',
+            GameStatus::FINISHED => 'finished',
+            GameStatus::QUARREL => 'quarrel',
+            default => 'unknown'
+        };
+    }
+
+    private function formatPlayersListForEvent(Game $game): array
+    {
+        $playersList = [];
+        
+        foreach ($game->getPlayers() as $player) {
+            $playersList[] = [
+                'id' => $player->getUserId(),
+                'name' => "Player_" . $player->getUserId(),
+                'position' => $player->getPosition(),
+                'balance' => $player->getBalance(),
+                'is_ready' => $player->isReady(),
+                'status' => $player->getStatus()->value
+            ];
+        }
+        
+        return $playersList;
     }
 
 }
