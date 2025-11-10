@@ -15,6 +15,8 @@ use App\Http\Controllers\GameController;
 |
 */
 
+Route::post('/public/seka/calculate-points', [GameController::class, 'calculatePoints']);
+
 // 🎯 Debug route to see all API routes
 Route::get('/debug/seka-routes', function () {
     $routes = collect(\Illuminate\Support\Facades\Route::getRoutes()->getRoutes())

@@ -4,7 +4,7 @@
       <div class="empty-avatar">+</div>
       <div class="empty-text">Свободно</div>
     </div>
-    <div v-else>
+    <div class="player-wrap" v-else>
       <!-- Аватар -->
       <div class="player-avatar">
         <div class="avatar-placeholder">{{ playerInitials }}</div>
@@ -100,37 +100,18 @@ const playerClasses = computed(() => ({
 
 // 🎯 ВЫЧИСЛЯЕМЫЕ СВОЙСТВА ДЛЯ ОЧКОВ SEKA
 const showCombinationPoints = computed(() => {
-  return props.cards.length > 0 && props.cards.every(card => card.isVisible)
-})
-
-const combinationResult = computed(() => {
-  if (!showCombinationPoints.value) return null
-  // TODO: Получить от родителя реальный расчет
-  // Временная заглушка для демонстрации
-  const points = 30 + Math.floor(Math.random() * 8) // 30-37 для демо
-  return {
-    points: points,
-    combination: getCombinationDisplayName(points)
-  }
+  return props.cards.length > 0 && 
+         props.cards.every(card => card.isVisible) &&
+         props.player.points > 0 // Показываем только если есть подсчитанные очки
 })
 
 const combinationPoints = computed(() => {
-  return combinationResult.value?.points || 0
+  return props.player.points || 0
 })
 
 const combinationDisplayName = computed(() => {
-  return combinationResult.value?.combination || 'Расчет...'
+  return props.player.combination || 'Расчет...'
 })
-
-// 🎯 ВРЕМЕННАЯ ФУНКЦИЯ ДЛЯ ДЕМО
-const getCombinationDisplayName = (points) => {
-  const names = {
-    33: '🎯 Три десятки', 34: '🎯 Три вальта', 35: '🎯 Три дамы',
-    36: '🎯 Три короля', 37: '🎯 Три туза', 32: '🌟 Джокер + Туз + масть',
-    31: '✨ Три масти + Туз', 30: '💎 Три масти'
-  }
-  return names[points] || `Комбинация (${points})`
-}
 
 const testReady = () => {
   console.log('1. CompactPlayerSlot: click')
@@ -271,7 +252,7 @@ console.log('🎴 [CompactPlayerSlot] Mounted:', props.player.name,
   color: white;
   font-weight: bold;
   font-size: 1.2rem;
-  margin: 0 auto;
+  /* margin: 0 auto; */
 }
 
 .avatar-placeholder {
@@ -302,10 +283,15 @@ console.log('🎴 [CompactPlayerSlot] Mounted:', props.player.name,
   z-index: 5;
 }
 
+.player-wrap {
+  display: flex;
+  flex-wrap: wrap;
+}
+
 /* Информация */
 .player-info {
   text-align: center;
-  margin: 4px 0; /* ← ДОБАВЛЯЕМ отступы */
+  margin-left: auto;
 }
 
 .player-name {
@@ -324,13 +310,13 @@ console.log('🎴 [CompactPlayerSlot] Mounted:', props.player.name,
 .player-cards {
   display: flex;
   gap: 8px;
-  margin: 8px 0;
+  margin: 8px auto;
   justify-content: center;
 }
 
 .card-slot {
-  width: 60px;
-  height: 84px;
+  width: 50px;
+  height: 70px;
   border-radius: 6px;
   overflow: hidden;
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);

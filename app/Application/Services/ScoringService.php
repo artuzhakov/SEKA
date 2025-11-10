@@ -26,20 +26,35 @@ class ScoringService
         $suits = $this->getSuits($cards);
         $ranks = $this->getRanks($cards);
         
+        \Log::info('🔍 calculateThreeCardHand:', [
+            'cards' => $cards,
+            'suits' => $suits,
+            'ranks' => $ranks,
+            'hasJoker' => $hasJoker,
+            'uniqueSuits' => count(array_unique($suits)),
+            'suitCounts' => array_count_values($suits),
+            'maxSameSuit' => max(array_count_values($suits))
+        ]);
+        
         // Проверяем специальные комбинации СЕКА сначала
         $specialCombo = $this->checkSpecialCombinations($ranks, $hasJoker);
         if ($specialCombo > 0) {
+            \Log::info('✅ Special combo found:', ['points' => $specialCombo]);
             return $specialCombo;
         }
         
         // Проверяем комбинации с мастями
         $suitCombo = $this->checkSuitCombinations($suits, $hasJoker, $ranks);
         if ($suitCombo > 0) {
+            \Log::info('✅ Suit combo found:', ['points' => $suitCombo]);
             return $suitCombo;
         }
         
         // Базовая комбинация
-        return $this->getBaseCombination($suits, $hasJoker, $ranks);
+        $baseCombo = $this->getBaseCombination($suits, $hasJoker, $ranks);
+        \Log::info('✅ Base combo:', ['points' => $baseCombo]);
+        
+        return $baseCombo;
     }
     
     private function calculateTwoCardHand(array $cards): int
@@ -58,6 +73,16 @@ class ScoringService
         // Убираем джокер из подсчета для специальных комбинаций
         if ($hasJoker) {
             unset($rankCounts['6']);
+        }
+        
+        // 🎯 ДВА ТУЗА = 22 очка
+        if (($rankCounts['A'] ?? 0) === 2) {
+            return 22;
+        }
+        
+        // 🎯 ТУЗ + ДЖОКЕР = 22 очка
+        if ($hasJoker && ($rankCounts['A'] ?? 0) === 1) {
+            return 22;
         }
         
         // Три десятки (33)
@@ -102,61 +127,105 @@ class ScoringService
         
         return 0;
     }
-    
+
     private function checkSuitCombinations(array $suits, bool $hasJoker, array $ranks): int
     {
         $suitCounts = array_count_values($suits);
         $maxSameSuit = max($suitCounts);
         $hasAce = in_array('A', $ranks);
         
-        // Джокер + Туз + карта той же масти (32)
+        // 🎯 ДЖОКЕР + ТУЗ + карта той же масти (32)
         if ($hasJoker && $hasAce) {
             // Находим масть туза
-            $aceSuit = $suits[array_search('A', $ranks)];
-            // Проверяем есть ли еще карта той же масти (не джокер)
-            $aceSuitCount = 0;
+            $aceIndex = array_search('A', $ranks);
+            $aceSuit = $suits[$aceIndex];
+            
+            // Считаем карты той же масти что и туз (кроме джокера)
+            $sameSuitAsAce = 0;
             foreach ($suits as $index => $suit) {
                 if ($suit === $aceSuit && $ranks[$index] !== '6') {
-                    $aceSuitCount++;
+                    $sameSuitAsAce++;
                 }
             }
-            if ($aceSuitCount >= 2) { // Туз + еще одна карта той же масти + джокер
+            
+            // Туз + минимум одна карта той же масти + джокер
+            if ($sameSuitAsAce >= 2) {
                 return 32;
             }
         }
         
-        // Три одинаковые масти (30)
+        // 🎯 ТРИ ОДИНАКОВЫЕ МАСТИ (30)
         if ($maxSameSuit === 3 && !$hasJoker && !$hasAce) {
             return 30;
         }
         
-        // Три одинаковые + Туз (31) ИЛИ Джокер + две одинаковые (31)
-        if (($maxSameSuit === 3 && $hasAce) || ($hasJoker && $maxSameSuit === 2)) {
+        // 🎯 ТРИ ОДИНАКОВЫЕ МАСТИ + ТУЗ (31)
+        if ($maxSameSuit === 3 && $hasAce && !$hasJoker) {
+            return 31;
+        }
+        
+        // 🎯 ДЖОКЕР + ДВЕ ОДИНАКОВЫЕ МАСТИ (31)
+        if ($hasJoker && $maxSameSuit === 2) {
             return 31;
         }
         
         return 0;
     }
-    
+
     private function getBaseCombination(array $suits, bool $hasJoker, array $ranks): int
     {
         $uniqueSuits = count(array_unique($suits));
         $hasAce = in_array('A', $ranks);
         
-        if ($uniqueSuits === 3 && !$hasJoker && !$hasAce) {
-            return 10; // Разные масти, нет джокера, нет туза
+        // Подсчитываем максимальное количество одинаковых мастей
+        $suitCounts = array_count_values($suits);
+        $maxSameSuit = max($suitCounts);
+        
+        // 🎯 ДВЕ ОДИНАКОВЫЕ МАСТИ + ТУЗ = 21 очко
+        // Туз дает бонус только если находится в паре с картой той же масти
+        if ($maxSameSuit === 2 && $hasAce && !$hasJoker) {
+            $aceIndex = array_search('A', $ranks);
+            $aceSuit = $suits[$aceIndex];
+            
+            $sameSuitAsAce = 0;
+            foreach ($suits as $suit) {
+                if ($suit === $aceSuit) {
+                    $sameSuitAsAce++;
+                }
+            }
+            
+            // Туз дает бонус только если у него есть пара той же масти
+            if ($sameSuitAsAce >= 2) {
+                return 21;
+            }
         }
         
+        // 🎯 ДВЕ ОДИНАКОВЫЕ МАСТИ БЕЗ ТУЗА = 20 очков
+        if ($maxSameSuit === 2 && !$hasAce && !$hasJoker) {
+            return 20;
+        }
+        
+        // 🎯 ТРИ РАЗНЫЕ МАСТИ + ТУЗ = 11 очков
         if ($uniqueSuits === 3 && $hasAce && !$hasJoker) {
-            return 11; // Туз + разные масти, нет джокера
+            return 11;
         }
         
-        // Если есть джокер, но нет особых комбинаций - минимальная
+        // 🎯 ТРИ РАЗНЫЕ МАСТИ БЕЗ ТУЗА = 10 очков
+        if ($uniqueSuits === 3 && !$hasJoker && !$hasAce) {
+            return 10;
+        }
+        
+        // 🎯 ДВЕ МАСТИ (когда туз не дает бонус) = 20 очков
+        if ($uniqueSuits === 2 && !$hasJoker) {
+            return 20;
+        }
+        
+        // Если есть джокер = 10 очков
         if ($hasJoker) {
             return 10;
         }
         
-        return 10; // Минимальная комбинация по умолчанию
+        return 10; // Минимальная комбинация
     }
     
     private function getTwoCardCombination(array $suits, bool $hasJoker, array $ranks): int

@@ -12,6 +12,7 @@ use App\Application\Services\DistributionService;
 use App\Application\Services\BiddingService;
 use App\Application\Services\QuarrelService;
 use App\Application\Services\ReadinessService;
+use App\Application\Services\ScoringService;
 use App\Application\DTO\StartGameDTO;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -1508,4 +1509,63 @@ class GameController extends Controller
         return $playersList;
     }
 
+    public function calculatePoints(Request $request)
+    {
+
+        \Log::info('🔄 calculatePoints called', $request->all());
+
+        $request->validate([
+            'cards' => 'required|array|min:2|max:3',
+            'cards.*' => 'string'
+        ]);
+
+        try {
+            \Log::info('📋 Cards received:', $request->cards);
+
+            $scoringService = app(ScoringService::class);
+            $points = $scoringService->calculateHandValue($request->cards);
+
+            \Log::info('✅ Points calculated:', ['points' => $points]);
+            
+            return response()->json([
+                'success' => true,
+                'points' => $points,
+                'combination' => $this->getCombinationName($points)
+            ]);
+            
+        } catch (\Exception $e) {
+            \Log::error('❌ calculatePoints error:', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => 'Failed to calculate points',
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    private function getCombinationName(int $points): string
+    {
+        $combinations = [
+            33 => 'Три десятки',
+            34 => 'Три вальта', 
+            35 => 'Три дамы',
+            36 => 'Три короля',
+            37 => 'Три туза',
+            32 => 'Джокер + Туз + масть',
+            31 => 'Три масти + Туз/Джокер',
+            30 => 'Три одинаковые масти',
+            22 => 'Два туза',
+            21 => 'Две масти + Туз/Джокер',
+            20 => 'Две одинаковые масти',
+            11 => 'Разные масти + Туз',
+            10 => 'Базовая комбинация'
+        ];
+        
+        return $combinations[$points] ?? "Комбинация ($points)";
+    }
+    
 }
