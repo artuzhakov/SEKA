@@ -29,25 +29,26 @@
             <div v-for="position in 6" :key="position" 
                  class="player-position" 
                  :class="[`pos-${position}`, getPositionClass(position)]">
-              <CompactPlayerSlot 
-                :player="getPlayer(position)"
-                :cards="getPlayerCards(position)"
-                :is-current-turn="isCurrentTurn(position)"
-                :is-dealer="isDealer(position)"
-                :show-ready="gameStatus === 'waiting'"
-                :show-actions="isCurrentTurn(position) && gameStatus === 'active'"
-                :current-round="currentRound"
-                :dealer-position="getDealerPosition()"
-                :current-bet="getCurrentBet()"
-                @player-action="(action) => {
-                  console.log('🎯 [GameTable] Player action received:', action, 'from player:', getPlayer(position).name)
-                  emit('player-action', action)
-                }"
-                @player-ready="(playerId) => {
-                  console.log('2. GameTable: event received', playerId)
-                  emit('player-ready', playerId)
-                }"
-              />
+                <CompactPlayerSlot 
+                  :player="getPlayer(position)"
+                  :cards="getPlayerCards(position)"
+                  :is-current-turn="isCurrentTurn(position)"
+                  :is-dealer="isDealer(position)"
+                  :show-ready="gameStatus === 'waiting'"
+                  :show-actions="isCurrentTurn(position) && gameStatus === 'active'"
+                  :current-round="currentRound"
+                  :dealer-position="getDealerPosition()"
+                  :current-bet="getCurrentBet()"
+                  :players="players"
+                  @player-action="(action) => {
+                    console.log('🎯 [GameTable] Player action received:', action, 'from player:', getPlayer(position).name)
+                    emit('player-action', action)
+                  }"
+                  @player-ready="(playerId) => {
+                    console.log('2. GameTable: event received', playerId)
+                    emit('player-ready', playerId)
+                  }"
+                />
             </div>
 
           </div>
@@ -201,7 +202,15 @@ const getPlayer = (position) => {
 
 const getDealerPosition = () => {
   const dealer = props.players.find(p => p.id === props.dealerId)
-  return dealer?.position || 1
+  const position = dealer?.position || 1
+  
+  console.log('🎯 [getDealerPosition] Расчет:', {
+    dealerId: props.dealerId,
+    dealerName: dealer?.name,
+    dealerPosition: position
+  })
+  
+  return position
 }
 
 const getCurrentBet = () => {
@@ -215,11 +224,17 @@ const getPlayerCards = (position) => {
 
 const getCurrentPlayer = () => getPlayer(props.players.findIndex(p => p.id === props.currentPlayerId) + 1)
 
+// В GameTable.vue - метод isCurrentTurn
 const isCurrentTurn = (position) => {
   const player = getPlayer(position)
-  const result = player.id === props.currentPlayerId
+  const result = player.id === props.currentPlayerId && player.id !== null
+  
   console.log(`🎯 [GameTable] isCurrentTurn(${position}):`, result, 
-    'player:', player.name, 'currentPlayerId:', props.currentPlayerId)
+    'player:', player.name, 
+    'playerId:', player.id, 
+    'currentPlayerId:', props.currentPlayerId,
+    'props.currentPlayerId:', props.currentPlayerId)
+    
   return result
 }
 

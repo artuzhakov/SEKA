@@ -85,7 +85,8 @@ const props = defineProps({
   },
   currentRound: Number, 
   dealerPosition: Number, 
-  currentBet: Number 
+  currentBet: Number,
+  players: Array
 })
 
 const emit = defineEmits(['player-action', 'player-ready'])
@@ -153,32 +154,64 @@ const availableActions = computed(() => {
   if (!props.isCurrentTurn) return []
   
   const isDealer = props.player.position === props.dealerPosition
-  const isFirstRound = props.currentRound === 1
-  const hasNoBet = props.currentBet === 0
   
-  // 🎯 ПРАВИЛО: Пропускать и темнить может только следующий после дилера
-  const isAfterDealer = props.player.position === (props.dealerPosition % 6) + 1
+  console.log('🎯 [availableActions] Проверка действий:', {
+    player: props.player.name,
+    position: props.player.position,
+    dealerPosition: props.dealerPosition,
+    isDealer: isDealer,
+    currentRound: props.currentRound,
+    currentBet: props.currentBet
+  })
   
-  // CHECK: только следующий после дилера в 1 раунде при отсутствии ставок
-  if (isAfterDealer && isFirstRound && hasNoBet) {
-    actions.unshift('check')
-  }
+  // 🎯 ПРАВИЛЬНЫЙ РАСЧЕТ СЛЕДУЮЩЕГО АКТИВНОГО ИГРОКА ПОСЛЕ ДИЛЕРА
+  // Получаем всех активных игроков из GameTable
+  const activePlayers = props.players.filter(p => p.id && !p.isFolded)
   
-  // DARK: только следующий после дилера в 1 раунде
-  if (isAfterDealer && isFirstRound && !props.player.isDark) {
-    actions.push('dark')
+  // Находим дилера среди активных
+  const dealerIndex = activePlayers.findIndex(p => p.position === props.dealerPosition)
+  
+  if (dealerIndex !== -1) {
+    // Находим следующего активного игрока после дилера
+    const nextPlayerIndex = (dealerIndex + 1) % activePlayers.length
+    const nextPlayer = activePlayers[nextPlayerIndex]
+    const isAfterDealer = props.player.position === nextPlayer.position
+    
+    console.log('🎯 [availableActions] Расчет следующего:', {
+      dealerPosition: props.dealerPosition,
+      dealerIndex: dealerIndex,
+      nextPlayer: nextPlayer?.name,
+      nextPlayerPosition: nextPlayer?.position,
+      playerPosition: props.player.position,
+      isAfterDealer: isAfterDealer,
+      activePlayers: activePlayers.map(p => ({ name: p.name, position: p.position }))
+    })
+    
+    // CHECK: только следующий активный игрок после дилера в 1 раунде при отсутствии ставок
+    if (isAfterDealer && props.currentRound === 1 && props.currentBet === 0) {
+      actions.unshift('check')
+      console.log('✅ [availableActions] CHECK доступен')
+    }
+    
+    // DARK: только следующий активный игрок после дилера в 1 раунде
+    if (isAfterDealer && props.currentRound === 1 && !props.player.isDark) {
+      actions.push('dark')
+      console.log('✅ [availableActions] DARK доступен')
+    }
+  } else {
+    console.log('🎯 [availableActions] Дилер не найден среди активных игроков')
   }
   
   // 🎯 OPEN: только если карты еще не открыты
-  const allCardsOpen = props.cards.length > 0 && props.cards.every(card => card.isVisible)
+  const allCardsOpen = props.cards && props.cards.length > 0 && props.cards.every(card => card.isVisible)
   if (!allCardsOpen) {
     actions.push('open')
   }
   
   // 🎯 ПРАВИЛО: Дилер НЕ может темнить и пропускать
   if (isDealer) {
-    // Убираем check и dark если они добавились
     const dealerActions = actions.filter(action => action !== 'check' && action !== 'dark')
+    console.log('🎯 [availableActions] Дилер - убраны check/dark:', dealerActions)
     return dealerActions
   }
   
@@ -187,12 +220,13 @@ const availableActions = computed(() => {
     actions.push('reveal')
   }
   
+  console.log('🎯 [availableActions] Финальные действия:', actions)
   return actions
 })
 
 // Отладочный вотчер
-watch(() => props.player.isReady, (newVal, oldVal) => {
-  console.log('👀 [CompactPlayerSlot] Player ready state changed:', 
+watch(() => props.isCurrentTurn, (newVal, oldVal) => {
+  console.log('👀 [CompactPlayerSlot] isCurrentTurn changed:', 
     props.player.name, oldVal, '→', newVal)
 }, { immediate: true })
 

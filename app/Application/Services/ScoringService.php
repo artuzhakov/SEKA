@@ -23,38 +23,38 @@ class ScoringService
     private function calculateThreeCardHand(array $cards): int
     {
         $hasJoker = $this->hasJoker($cards);
-        $suits = $this->getSuits($cards);
-        $ranks = $this->getRanks($cards);
         
-        \Log::info('🔍 calculateThreeCardHand:', [
-            'cards' => $cards,
-            'suits' => $suits,
-            'ranks' => $ranks,
-            'hasJoker' => $hasJoker,
-            'uniqueSuits' => count(array_unique($suits)),
-            'suitCounts' => array_count_values($suits),
-            'maxSameSuit' => max(array_count_values($suits))
-        ]);
-        
-        // Проверяем специальные комбинации СЕКА сначала
-        $specialCombo = $this->checkSpecialCombinations($ranks, $hasJoker);
-        if ($specialCombo > 0) {
-            \Log::info('✅ Special combo found:', ['points' => $specialCombo]);
-            return $specialCombo;
+        if (!$hasJoker) {
+            // Существующая логика без джокера
+            $suits = $this->getSuits($cards);
+            $ranks = $this->getRanks($cards);
+            
+            $specialCombo = $this->checkSpecialCombinations($ranks, false);
+            if ($specialCombo > 0) return $specialCombo;
+            
+            $suitCombo = $this->checkSuitCombinations($suits, false, $ranks);
+            if ($suitCombo > 0) return $suitCombo;
+            
+            return $this->getBaseCombination($suits, false, $ranks);
         }
         
-        // Проверяем комбинации с мастями
-        $suitCombo = $this->checkSuitCombinations($suits, $hasJoker, $ranks);
-        if ($suitCombo > 0) {
-            \Log::info('✅ Suit combo found:', ['points' => $suitCombo]);
-            return $suitCombo;
+        // 🎯 НОВАЯ ЛОГИКА С ДЖОКЕРОМ
+        $bestScore = 10; // Минимальный счет
+        
+        $possibleCards = $this->getPossibleJokerReplacements();
+        
+        foreach ($possibleCards as $replacement) {
+            $replacedCards = $this->replaceJoker($cards, $replacement);
+            $suits = $this->getSuits($replacedCards);
+            $ranks = $this->getRanks($replacedCards);
+            
+            $score = $this->calculateWithoutJoker($suits, $ranks);
+            if ($score > $bestScore) {
+                $bestScore = $score;
+            }
         }
         
-        // Базовая комбинация
-        $baseCombo = $this->getBaseCombination($suits, $hasJoker, $ranks);
-        \Log::info('✅ Base combo:', ['points' => $baseCombo]);
-        
-        return $baseCombo;
+        return $bestScore;
     }
     
     private function calculateTwoCardHand(array $cards): int
@@ -288,4 +288,38 @@ class ScoringService
         
         return $map[$rank] ?? $rank;
     }
+
+    private function getPossibleJokerReplacements(): array
+    {
+        // 🎯 Джокер может стать любой картой от 10 до туза
+        $suits = ['♥', '♦', '♣', '♠'];
+        $ranks = ['10', 'J', 'Q', 'K', 'A'];
+        
+        $replacements = [];
+        foreach ($suits as $suit) {
+            foreach ($ranks as $rank) {
+                $replacements[] = $rank . $suit;
+            }
+        }
+        return $replacements;
+    }
+
+    private function replaceJoker(array $cards, string $replacement): array
+    {
+        return array_map(function($card) use ($replacement) {
+            return $card === self::JOKER ? $replacement : $card;
+        }, $cards);
+    }
+
+    private function calculateWithoutJoker(array $suits, array $ranks): int
+    {
+        $specialCombo = $this->checkSpecialCombinations($ranks, false);
+        if ($specialCombo > 0) return $specialCombo;
+        
+        $suitCombo = $this->checkSuitCombinations($suits, false, $ranks);
+        if ($suitCombo > 0) return $suitCombo;
+        
+        return $this->getBaseCombination($suits, false, $ranks);
+    }
+
 }

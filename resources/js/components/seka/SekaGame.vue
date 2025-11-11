@@ -57,6 +57,28 @@
       </div>
     </div>
 
+    <!-- После game-header -->
+    <div class="betting-info-panel">
+      <div class="betting-stats">
+        <div class="stat-item">
+          <span class="label">Текущая ставка:</span>
+          <span class="value">{{ getCurrentBet() }}🪙</span>
+        </div>
+        <div class="stat-item">
+          <span class="label">Базовая ставка:</span>
+          <span class="value">{{ gameState.baseBet }}🪙</span>
+        </div>
+        <div class="stat-item">
+          <span class="label">Минимальное повышение:</span>
+          <span class="value">{{ minBet }}🪙</span>
+        </div>
+        <div class="stat-item" v-if="gameState.status === 'active'">
+          <span class="label">Раунд:</span>
+          <span class="value">{{ gameState.currentRound }}/3</span>
+        </div>
+      </div>
+    </div>
+
     <!-- Игровой стол -->
     <GameTable
       :players="players"
@@ -343,6 +365,24 @@ const activePlayersCount = computed(() => {
 
 const minBet = computed(() => {
   const currentMax = getCurrentBet()
+  const player = getCurrentPlayer()
+  
+  if (gameMode.value === 'dark' && gameState.currentRound < 3) {
+    // 🎯 ТЕМНАЯ ИГРА: минимальная ВИДИМАЯ ставка = базовой ставке (50)
+    // Но пользователь вводит РЕАЛЬНУЮ сумму, которая потом делится пополам
+    const minVisibleBet = gameState.baseBet
+    const minRealBet = minVisibleBet
+    
+    console.log('🎯 minBet для темной игры:', {
+      baseBet: gameState.baseBet,
+      minVisibleBet: minVisibleBet,
+      minRealBet: minRealBet
+    })
+    
+    return minRealBet
+  }
+  
+  // 🎯 ОБЫЧНАЯ ИГРА: текущая + 1
   return currentMax + 1
 })
 
@@ -465,8 +505,25 @@ const getDealer = () => {
 
 const getCurrentBet = () => {
   if (currentMode.value === 'demo') {
-    const maxPlayerBet = Math.max(...players.map(p => p.currentBet))
-    return Math.max(maxPlayerBet, gameState.baseBet)
+    // 🎯 Для темной игры возвращаем ВИДИМУЮ максимальную ставку
+    const maxPlayerBet = Math.max(...players.map(p => {
+      // Темнящий игрок - его ставка уже видимая (не нужно умножать)
+      return p.currentBet
+    }))
+    const currentBet = Math.max(maxPlayerBet, gameState.baseBet)
+    
+    console.log('🎯 [getCurrentBet] РАСЧЕТ:', {
+      maxPlayerBet: maxPlayerBet,
+      baseBet: gameState.baseBet,
+      result: currentBet,
+      players: players.map(p => ({ 
+        name: p.name, 
+        visibleBet: p.currentBet, 
+        isDark: p.isDark
+      }))
+    })
+    
+    return currentBet
   } else {
     return logicCurrentMaxBet.value || 0
   }
@@ -533,31 +590,132 @@ const takeDemoAction = async (action) => {
   if (!player) return
 
   player.lastAction = action
+  player.hasActed = true // ← ТОЛЬКО ЗДЕСЬ ОТМЕЧАЕМ ВЫПОЛНЕННЫЙ ХОД
 
   switch(action) {
+
     case 'check':
-      if (getCurrentBet() === 0) {
-        console.log('✅ Пропуск хода')
-        passToNextDemoPlayer()
-        checkForDemoRoundEnd()
+      const checkCurrentMaxBet = getCurrentBet()
+      
+      console.log('💰 CHECK проверка:', {
+        player: player.name,
+        currentBet: player.currentBet,
+        maxBet: checkCurrentMaxBet,
+        balance: player.balance
+      })
+      
+      if (checkCurrentMaxBet === 0) {
+        // 🎯 Если ставок нет - вносим базовую ставку (ПОЛНАЯ ПЕРЕЗАПИСЬ)
+        if (player.balance >= gameState.baseBet) {
+          const previousBet = player.currentBet
+          const oldBalance = player.balance
+          const oldPot = gameState.pot
+          
+          // Возвращаем если что-то было
+          player.balance += previousBet
+          
+          // Ставим заново
+          player.currentBet = gameState.baseBet
+          player.balance -= gameState.baseBet
+          gameState.pot = gameState.pot - previousBet + gameState.baseBet
+          
+          console.log('✅ CHECK: Внесена базовая ставка (ПОЛНАЯ ПЕРЕЗАПИСЬ)', {
+            player: player.name,
+            previousBetReturned: previousBet,
+            baseBet: gameState.baseBet,
+            oldBalance: oldBalance,
+            newBalance: player.balance,
+            oldPot: oldPot,
+            newPot: gameState.pot
+          })
+          
+          passToNextPlayer()
+          checkForRoundEnd()
+        } else {
+          console.log('❌ Недостаточно средств для базовой ставки')
+        }
+      } else if (player.currentBet === checkCurrentMaxBet) {
+        // 🎯 Если ставка уже равна текущей максимальной - просто передаем ход
+        console.log('✅ CHECK: Ставка уже равна, передача хода')
+        passToNextPlayer()
+        checkForRoundEnd()
+      } else {
+        // 🎯 Если есть ставки и наша ставка меньше - нельзя CHECK, нужно CALL
+        console.log('❌ Нельзя CHECK при наличии ставок, используйте CALL')
       }
       break
-      
+
     case 'call':
-      const currentMaxBet = getCurrentBet()
-      const callAmount = currentMaxBet - player.currentBet
+      const callCurrentMaxBet = getCurrentBet()
       
-      if (callAmount > 0 && player.balance >= callAmount) {
-        player.currentBet += callAmount
-        player.balance -= callAmount
-        gameState.pot += callAmount
+      console.log('💰 CALL расчет:', {
+        player: player.name,
+        currentBet: player.currentBet,
+        maxBet: callCurrentMaxBet,
+        balance: player.balance
+      })
+      
+      if (player.isDark && gameState.currentRound < 3) {
+        // 🎯 ТЕМНЫЙ CALL - ПРИВИЛЕГИЯ 1-2 РАУНДЫ
+        const playerPaidAmount = Math.floor(callCurrentMaxBet / 2)  // Игрок платит половину
+        const bankReceivedAmount = callCurrentMaxBet                // Банк получает полную сумму
         
-        passToNextDemoPlayer()
-      } else if (callAmount === 0) {
-        passToNextDemoPlayer()
+        if (player.balance >= playerPaidAmount) {
+          const oldBalance = player.balance
+          const oldPot = gameState.pot
+          
+          player.currentBet = callCurrentMaxBet
+          player.balance -= playerPaidAmount
+          gameState.pot += bankReceivedAmount
+          
+          console.log('✅ DARK CALL: Поддержка ставки', {
+            player: player.name,
+            playerPaid: playerPaidAmount,
+            bankReceived: bankReceivedAmount,
+            newBet: player.currentBet,
+            oldBalance: oldBalance,
+            newBalance: player.balance,
+            oldPot: oldPot,
+            newPot: gameState.pot
+          })
+          
+          passToNextPlayer()
+          checkForRoundEnd()
+        } else {
+          console.log('❌ Недостаточно средств для поддержки ставки')
+        }
+      } else {
+        // 🎯 ОБЫЧНЫЙ CALL ИЛИ ТЕМНЫЙ В 3 РАУНДЕ
+        const playerPaidAmount = callCurrentMaxBet     // Игрок платит полную сумму
+        const bankReceivedAmount = callCurrentMaxBet   // Банк получает полную сумму
+        
+        if (player.balance >= playerPaidAmount) {
+          const oldBalance = player.balance
+          const oldPot = gameState.pot
+          
+          player.currentBet = callCurrentMaxBet
+          player.balance -= playerPaidAmount
+          gameState.pot += bankReceivedAmount
+          
+          console.log('✅ CALL: Поддержка ставки', {
+            player: player.name,
+            playerPaid: playerPaidAmount,
+            bankReceived: bankReceivedAmount,
+            newBet: player.currentBet,
+            oldBalance: oldBalance,
+            newBalance: player.balance,
+            oldPot: oldPot,
+            newPot: gameState.pot
+          })
+          
+          passToNextPlayer()
+          checkForRoundEnd()
+        } else {
+          console.log('❌ Недостаточно средств для поддержки ставки')
+        }
       }
       break
-      
+
     case 'raise':
       gameMode.value = null
       openRaiseModal(player)
@@ -581,6 +739,7 @@ const takeDemoAction = async (action) => {
       }
       gameMode.value = 'dark'
       openRaiseModal(player)
+      player.hasActed = false
       break
       
     case 'open':
@@ -601,8 +760,29 @@ const takeDemoAction = async (action) => {
         }
       }
       console.log('👁️ Игрок открыл карты:', player.name)
+      player.hasActed = false
       break
 
+  }
+}
+
+const passToNextPlayer = () => {
+  console.log('🔄 [passToNextPlayer] Начало передачи хода')
+  if (currentMode.value === 'demo') {
+    passToNextDemoPlayer()
+  } else {
+    // Для реального режима
+    console.log('🔄 Pass to next player in real mode')
+  }
+}
+
+const checkForRoundEnd = () => {
+  console.log('🎯 [checkForRoundEnd] Проверка завершения раунда')
+  if (currentMode.value === 'demo') {
+    checkForDemoRoundEnd()
+  } else {
+    // Для реального режима
+    console.log('🎯 [checkForRoundEnd] Режим реальной игры')
   }
 }
 
@@ -617,6 +797,7 @@ const startDemoGame = () => {
   players.forEach(player => {
     if (player.id && !player.isReady) {
       const position = player.position
+      player.hasActed = false
       Object.assign(player, {
         id: null,
         name: 'Свободно',
@@ -654,6 +835,29 @@ const startDemoGame = () => {
   selectRandomDemoDealer()
   collectDemoBaseBets()
   dealUniqueCards()
+  
+  // 🎯 ВАЖНО: Установить первого игрока после дилера
+  const dealerIndex = activePlayers.findIndex(p => p.id === gameState.dealerId)
+  
+  console.log('🎯 Поиск первого игрока:', {
+    dealerId: gameState.dealerId,
+    dealerIndex: dealerIndex,
+    activePlayers: activePlayers.map(p => ({ name: p.name, id: p.id, position: p.position }))
+  })
+  
+  if (dealerIndex === -1) {
+    console.log('❌ Дилер не найден среди активных игроков')
+    // Выбираем случайного игрока как запасной вариант
+    const randomIndex = Math.floor(Math.random() * activePlayers.length)
+    gameState.currentPlayerId = activePlayers[randomIndex].id
+    console.log('🎯 Случайный первый ход:', activePlayers[randomIndex].name)
+  } else {
+    const firstPlayerIndex = (dealerIndex + 1) % activePlayers.length
+    const firstPlayer = activePlayers[firstPlayerIndex]
+    
+    gameState.currentPlayerId = firstPlayer.id
+    console.log('🎯 Первый ход у:', firstPlayer.name, 'ID:', firstPlayer.id, 'Position:', firstPlayer.position)
+  }
 }
 
 const dealDemoCards = () => {
@@ -679,18 +883,42 @@ const dealDemoCards = () => {
 }
 
 const passToNextDemoPlayer = () => {
+  console.log('🔄 [passToNextDemoPlayer] Начало передачи демо-хода')
+
   const activePlayers = players.filter(p => p.id && !p.isFolded)
+  console.log('🎯 Активные игроки:', activePlayers.map(p => ({ 
+    id: p.id, 
+    name: p.name, 
+    folded: p.isFolded,
+    hasActed: p.hasActed // ← ДОБАВИМ ДЛЯ ДЕБАГА
+  })))
+  
   if (activePlayers.length === 0) return
   
   const currentIndex = activePlayers.findIndex(p => p.id === currentPlayerId.value)
+  console.log('🎯 Текущий индекс:', currentIndex, 'игрок:', activePlayers[currentIndex]?.name)
+  
+  // 🎯 ВАЖНО: Если переходим к первому игроку - это НОВЫЙ КРУГ, сбрасываем флаги действий
   const nextIndex = (currentIndex + 1) % activePlayers.length
+  const isNewRound = nextIndex === 0
+  
+  if (isNewRound) {
+    console.log('🔄 НОВЫЙ КРУГ ТОРГОВ - сбрасываем флаги действий')
+    activePlayers.forEach(player => {
+      player.hasActed = false
+    })
+  }
+  
   const nextPlayer = activePlayers[nextIndex]
+  console.log('🎯 Следующий индекс:', nextIndex, 'игрок:', nextPlayer.name)
   
   gameState.currentPlayerId = nextPlayer.id
   
   console.log('🔄 Ход передан:', {
     from: players.find(p => p.id === currentPlayerId.value)?.name,
-    to: nextPlayer.name
+    to: nextPlayer.name,
+    newCurrentPlayerId: gameState.currentPlayerId,
+    isNewRound: isNewRound
   })
 }
 
@@ -763,28 +991,82 @@ const confirmDemoRaise = () => {
   const player = players.find(p => p.id === currentPlayerId.value)
   if (!player) return
   
-  const baseRaiseAmount = raiseAmount.value - player.currentBet
+  const baseRaiseAmount = raiseAmount.value // Это ВИДИМАЯ сумма ставки
   
-  if (baseRaiseAmount < 1) {
-    console.log('❌ Raise amount must be at least 1 more than current bet')
+  console.log('🔍 [confirmDemoRaise] НАЧАЛО:', {
+    player: player.name,
+    baseRaiseAmount: baseRaiseAmount,
+    playerCurrentBet: player.currentBet, // Текущая ставка игрока
+    gameMode: gameMode.value,
+    currentRound: gameState.currentRound,
+    baseBet: gameState.baseBet
+  })
+
+  // 🎯 ПРОВЕРКА: видимая ставка не может быть ниже базовой
+  if (baseRaiseAmount < gameState.baseBet) {
+    console.log('❌ Ставка не может быть ниже базовой:', gameState.baseBet)
     return
   }
-  
-  const adjustedBetAmount = getAdjustedBet(raiseAmount.value)
-  const actualPaidAmount = adjustedBetAmount - player.currentBet
-  
-  if (player.balance >= actualPaidAmount) {
-    player.currentBet = adjustedBetAmount
-    player.balance -= actualPaidAmount
-    gameState.pot += actualPaidAmount
+
+  let playerPaidAmount
+  let bankReceivedAmount
+
+  if (gameMode.value === 'dark' && gameState.currentRound < 3) {
+    // 🎯 ТЕМНАЯ СТАВКА (RAISE) - ПРИВИЛЕГИЯ 1-2 РАУНДЫ
+    // Игрок платит ПОЛОВИНУ от ВИДИМОЙ суммы ставки
+    playerPaidAmount = Math.floor(baseRaiseAmount / 2)
+    bankReceivedAmount = baseRaiseAmount // Банк получает полную видимую сумму
+    
+    console.log('💰 [DARK RAISE] ПАРАМЕТРЫ:', {
+      visibleBet: baseRaiseAmount,
+      playerPaid: playerPaidAmount, // Половина от видимой
+      bankReceived: bankReceivedAmount // Полная видимая
+    })
+  } else {
+    // 🎯 ОБЫЧНАЯ СТАВКА (RAISE) ИЛИ ТЕМНАЯ В 3 РАУНДЕ
+    playerPaidAmount = baseRaiseAmount
+    bankReceivedAmount = baseRaiseAmount
+    
+    console.log('💰 [REGULAR RAISE] ПАРАМЕТРЫ:', {
+      visibleBet: baseRaiseAmount,
+      playerPaid: playerPaidAmount,
+      bankReceived: bankReceivedAmount
+    })
+  }
+
+  // Проверяем баланс
+  if (player.balance >= playerPaidAmount) {
+    console.log('💰 БАЛАНС ДОСТАТОЧЕН')
+    
+    const oldBalance = player.balance
+    const oldPot = gameState.pot
+    
+    // Обновляем ставку и баланс
+    player.currentBet = baseRaiseAmount
+    player.balance -= playerPaidAmount
+    gameState.pot += bankReceivedAmount
     
     if (gameMode.value === 'dark') {
       player.isDark = true
     }
+
+    console.log('✅ СТАВКА ВЫПОЛНЕНА:', {
+      player: player.name,
+      oldBalance: oldBalance,
+      newBalance: player.balance,
+      oldPot: oldPot,
+      newPot: gameState.pot,
+      playerPaid: playerPaidAmount,
+      bankReceived: bankReceivedAmount,
+      newBet: player.currentBet
+    })
     
     gameMode.value = null
     raiseModal.value = false
-    passToNextDemoPlayer()
+    passToNextPlayer()
+    checkForRoundEnd()
+  } else {
+    console.log('❌ Недостаточно средств для ставки')
   }
 }
 
@@ -860,6 +1142,7 @@ const collectDemoBaseBets = () => {
 }
 
 const checkForDemoRoundEnd = () => {
+  console.log('🎯 [checkForDemoRoundEnd] Проверка завершения демо-раунда')
   setTimeout(() => {
     if (checkDemoRoundCompletion()) {
       console.log('🎯 Демо-раунд завершен!')
@@ -876,15 +1159,45 @@ const checkDemoRoundCompletion = () => {
   }
   
   const currentMaxBet = getCurrentBet()
-  const playersWithActions = activePlayers.filter(player => 
-    player.currentBet === currentMaxBet || player.isFolded
+  
+  console.log('🎯 Проверка завершения раунда:', {
+    activePlayers: activePlayers.map(p => ({ 
+      name: p.name, 
+      bet: p.currentBet, 
+      folded: p.isFolded,
+      hasActed: p.hasActed // ← ДОБАВЬ ДЛЯ ДЕБАГА
+    })),
+    currentMaxBet: currentMaxBet
+  })
+  
+  // 🎯 ИСПРАВЛЕННАЯ ЛОГИКА:
+  // Раунд завершается когда ВСЕ активные игроки либо:
+  // 1. Сбросили карты ИЛИ
+  // 2. Сделали ход в этом круге (hasActed = true) И их ставки равны
+  
+  const allPlayersActed = activePlayers.every(player => 
+    player.isFolded || player.hasActed
   )
   
-  if (playersWithActions.length === activePlayers.length && activePlayers.length > 1) {
+  const allBetsEqual = activePlayers.filter(p => !p.isFolded)
+    .every(player => player.currentBet === currentMaxBet)
+  
+  console.log('🎯 Условия завершения:', {
+    allPlayersActed,
+    allBetsEqual, 
+    activePlayersCount: activePlayers.length,
+    playersNotActed: activePlayers.filter(p => !p.isFolded && p.currentBet === 0).map(p => p.name)
+  })
+  
+  if (allPlayersActed && allBetsEqual && activePlayers.length > 1) {
     if (gameState.currentRound < 3) {
       gameState.currentRound++
+      gameState.baseBet = currentMaxBet
+      
+      console.log(`🔄 Переход на раунд ${gameState.currentRound}, базовая ставка: ${gameState.baseBet}🪙`)
+      
       players.forEach(player => {
-        if (player.id) {
+        if (player.id && !player.isFolded) {
           player.currentBet = 0
         }
       })
@@ -895,6 +1208,8 @@ const checkDemoRoundCompletion = () => {
       const firstPlayer = activePlayers[firstPlayerIndex]
       
       gameState.currentPlayerId = firstPlayer.id
+      
+      console.log('🎯 Новый раунд начат! Первый ход у:', firstPlayer.name)
     } else {
       determineDemoWinner()
     }
@@ -1145,6 +1460,18 @@ const loadGameState = () => {
         
         currentMode.value = 'demo'
         console.log('💾 Demo game state loaded from storage')
+        
+        // 🎯 ВОССТАНОВЛЕНИЕ ТЕКУЩЕГО ИГРОКА
+        // Если текущий игрок "Свободно" - найти первого активного
+        const currentPlayer = players.find(p => p.id === gameState.currentPlayerId)
+        if (!currentPlayer || !currentPlayer.id) {
+          const firstActive = players.find(p => p.id && !p.isFolded)
+          if (firstActive) {
+            gameState.currentPlayerId = firstActive.id
+            console.log('🔄 Восстановлен текущий игрок:', firstActive.name)
+          }
+        }
+        
         return true
       }
     } catch (error) {
@@ -1198,6 +1525,13 @@ onMounted(() => {
       currentMode.value = 'real'
       loadBackendState()
     }
+  } else {
+    // 🎯 ПРОВЕРКА СОСТОЯНИЯ ПОСЛЕ ЗАГРУЗКИ
+    console.log('🔍 State after load:', {
+      currentPlayerId: gameState.currentPlayerId,
+      status: gameState.status,
+      activePlayers: players.filter(p => p.id && !p.isFolded).map(p => ({ id: p.id, name: p.name }))
+    })
   }
 })
 
@@ -1573,6 +1907,40 @@ const checkDevice = () => {
 .cancel-btn {
   background: #4a5568;
   color: white;
+}
+
+.betting-info-panel {
+  background: rgba(0, 0, 0, 0.8);
+  border: 2px solid #fbbf24;
+  border-radius: 10px;
+  padding: 12px;
+  margin: 10px auto;
+  max-width: 600px;
+}
+
+.betting-stats {
+  display: flex;
+  justify-content: space-around;
+  flex-wrap: wrap;
+  gap: 15px;
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.stat-item .label {
+  font-size: 0.8rem;
+  color: #9ca3af;
+}
+
+.stat-item .value {
+  font-size: 1rem;
+  font-weight: bold;
+  color: #fbbf24;
 }
 
 @media (max-width: 768px) {
