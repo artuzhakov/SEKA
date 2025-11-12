@@ -368,13 +368,12 @@ const minBet = computed(() => {
   const player = getCurrentPlayer()
   
   if (gameMode.value === 'dark' && gameState.currentRound < 3) {
-    // 🎯 ТЕМНАЯ ИГРА: минимальная ВИДИМАЯ ставка = базовой ставке (50)
-    // Но пользователь вводит РЕАЛЬНУЮ сумму, которая потом делится пополам
-    const minVisibleBet = gameState.baseBet
+    // 🎯 ТЕМНАЯ ИГРА: минимальная ВИДИМАЯ ставка = текущей максимальной + 1
+    const minVisibleBet = currentMax + 1
     const minRealBet = minVisibleBet
     
     console.log('🎯 minBet для темной игры:', {
-      baseBet: gameState.baseBet,
+      currentMax: currentMax,
       minVisibleBet: minVisibleBet,
       minRealBet: minRealBet
     })
@@ -584,16 +583,28 @@ const handleDemoAction = (action) => {
 }
 
 const takeDemoAction = async (action) => {
-  console.log('🎯 [Demo] Действие:', action)
+  console.log('🎯 [Demo] Действие:', action, 'Игрок:', getCurrentPlayer().name)
   
   const player = players.find(p => p.id === currentPlayerId.value)
   if (!player) return
 
+  console.log('🔍 [BEFORE] hasActed состояние ДО действия:', {
+    player: player.name,
+    hasActed: player.hasActed,
+    currentBet: player.currentBet
+  })
+
+  // 🎯 ВАЖНО: Устанавливаем флаг ДО выполнения действия
   player.lastAction = action
   player.hasActed = true // ← ТОЛЬКО ЗДЕСЬ ОТМЕЧАЕМ ВЫПОЛНЕННЫЙ ХОД
 
-  switch(action) {
+  console.log('🔍 [AFTER] hasActed состояние ПОСЛЕ действия:', {
+    player: player.name,
+    hasActed: player.hasActed,
+    currentBet: player.currentBet
+  })
 
+  switch(action) {
     case 'check':
       const checkCurrentMaxBet = getCurrentBet()
       
@@ -629,6 +640,7 @@ const takeDemoAction = async (action) => {
             newPot: gameState.pot
           })
           
+          console.log('✅ CHECK выполнен, передаем ход')
           passToNextPlayer()
           checkForRoundEnd()
         } else {
@@ -637,6 +649,7 @@ const takeDemoAction = async (action) => {
       } else if (player.currentBet === checkCurrentMaxBet) {
         // 🎯 Если ставка уже равна текущей максимальной - просто передаем ход
         console.log('✅ CHECK: Ставка уже равна, передача хода')
+        console.log('✅ CHECK выполнен, передаем ход')
         passToNextPlayer()
         checkForRoundEnd()
       } else {
@@ -657,8 +670,16 @@ const takeDemoAction = async (action) => {
       
       if (player.isDark && gameState.currentRound < 3) {
         // 🎯 ТЕМНЫЙ CALL - ПРИВИЛЕГИЯ 1-2 РАУНДЫ
-        const playerPaidAmount = Math.floor(callCurrentMaxBet / 2)  // Игрок платит половину
-        const bankReceivedAmount = callCurrentMaxBet                // Банк получает полную сумму
+        // Игрок платит ПОЛОВИНУ от ТЕКУЩЕЙ МАКСИМАЛЬНОЙ СТАВКИ
+        const playerPaidAmount = Math.floor(callCurrentMaxBet / 2)  // Половина от текущей ставки
+        const bankReceivedAmount = callCurrentMaxBet               // Банк получает полную сумму
+        
+        console.log('💰 DARK CALL расчет:', {
+          currentBet: player.currentBet,
+          maxBet: callCurrentMaxBet,
+          playerPaid: playerPaidAmount,
+          bankReceived: bankReceivedAmount
+        })
         
         if (player.balance >= playerPaidAmount) {
           const oldBalance = player.balance
@@ -679,6 +700,7 @@ const takeDemoAction = async (action) => {
             newPot: gameState.pot
           })
           
+          console.log('✅ CALL выполнен, передаем ход')
           passToNextPlayer()
           checkForRoundEnd()
         } else {
@@ -686,8 +708,9 @@ const takeDemoAction = async (action) => {
         }
       } else {
         // 🎯 ОБЫЧНЫЙ CALL ИЛИ ТЕМНЫЙ В 3 РАУНДЕ
-        const playerPaidAmount = callCurrentMaxBet     // Игрок платит полную сумму
-        const bankReceivedAmount = callCurrentMaxBet   // Банк получает полную сумму
+        const difference = callCurrentMaxBet - player.currentBet
+        const playerPaidAmount = difference     // Игрок платит полную разницу
+        const bankReceivedAmount = difference   // Банк получает полную разницу
         
         if (player.balance >= playerPaidAmount) {
           const oldBalance = player.balance
@@ -699,6 +722,7 @@ const takeDemoAction = async (action) => {
           
           console.log('✅ CALL: Поддержка ставки', {
             player: player.name,
+            difference: difference,
             playerPaid: playerPaidAmount,
             bankReceived: bankReceivedAmount,
             newBet: player.currentBet,
@@ -708,6 +732,7 @@ const takeDemoAction = async (action) => {
             newPot: gameState.pot
           })
           
+          console.log('✅ CALL выполнен, передаем ход')
           passToNextPlayer()
           checkForRoundEnd()
         } else {
@@ -728,6 +753,7 @@ const takeDemoAction = async (action) => {
         playerCards[player.id].forEach(card => card.isVisible = false)
       }
       console.log('✅ Игрок сбросил карты')
+      console.log('✅ FOLD выполнен, передаем ход')
       passToNextDemoPlayer()
       checkForDemoRoundEnd()
       break
@@ -739,7 +765,8 @@ const takeDemoAction = async (action) => {
       }
       gameMode.value = 'dark'
       openRaiseModal(player)
-      player.hasActed = false
+      // 🎯 НЕ сбрасываем hasActed - игрок уже сделал ход выбрав "темную игру"
+      console.log('🌑 DARK: Открыто окно темной игры, hasActed сохранен')
       break
       
     case 'open':
@@ -760,9 +787,21 @@ const takeDemoAction = async (action) => {
         }
       }
       console.log('👁️ Игрок открыл карты:', player.name)
-      player.hasActed = false
+      // 🎯 НЕ сбрасываем hasActed - игрок уже сделал ход выбрав "открытие карт"
+      console.log('👁️ OPEN: Карты открыты, hasActed сохранен')
       break
 
+    default:
+      console.log('❌ Неизвестное действие:', action)
+      return
+  }
+
+  // 🎯 ВАЖНО: Проверяем завершение раунда с задержкой (только для действий где передается ход)
+  if (action !== 'dark' && action !== 'open' && action !== 'raise') {
+    setTimeout(() => {
+      console.log('⏰ Запускаем проверку завершения раунда...')
+      checkForRoundEnd()
+    }, 500)
   }
 }
 
@@ -886,32 +925,36 @@ const passToNextDemoPlayer = () => {
   console.log('🔄 [passToNextDemoPlayer] Начало передачи демо-хода')
 
   const activePlayers = players.filter(p => p.id && !p.isFolded)
-  console.log('🎯 Активные игроки:', activePlayers.map(p => ({ 
-    id: p.id, 
-    name: p.name, 
-    folded: p.isFolded,
-    hasActed: p.hasActed // ← ДОБАВИМ ДЛЯ ДЕБАГА
+  
+  console.log('🔍 Активные игроки перед передачей хода:', activePlayers.map(p => ({
+    name: p.name,
+    hasActed: p.hasActed,
+    currentBet: p.currentBet
   })))
   
   if (activePlayers.length === 0) return
   
   const currentIndex = activePlayers.findIndex(p => p.id === currentPlayerId.value)
-  console.log('🎯 Текущий индекс:', currentIndex, 'игрок:', activePlayers[currentIndex]?.name)
-  
-  // 🎯 ВАЖНО: Если переходим к первому игроку - это НОВЫЙ КРУГ, сбрасываем флаги действий
   const nextIndex = (currentIndex + 1) % activePlayers.length
   const isNewRound = nextIndex === 0
   
-  if (isNewRound) {
-    console.log('🔄 НОВЫЙ КРУГ ТОРГОВ - сбрасываем флаги действий')
-    activePlayers.forEach(player => {
-      player.hasActed = false
-    })
-  }
+  console.log('🔍 Индексы передачи:', {
+    currentIndex,
+    nextIndex, 
+    isNewRound,
+    currentPlayer: activePlayers[currentIndex]?.name,
+    nextPlayer: activePlayers[nextIndex]?.name
+  })
+  
+  // 🎯 КОММЕНТИРУЕМ сброс флагов - переносим в checkDemoRoundCompletion
+  // if (isNewRound) {
+  //   console.log('🔄 НОВЫЙ КРУГ ТОРГОВ - сбрасываем флаги действий')
+  //   activePlayers.forEach(player => {
+  //     player.hasActed = false
+  //   })
+  // }
   
   const nextPlayer = activePlayers[nextIndex]
-  console.log('🎯 Следующий индекс:', nextIndex, 'игрок:', nextPlayer.name)
-  
   gameState.currentPlayerId = nextPlayer.id
   
   console.log('🔄 Ход передан:', {
@@ -1151,72 +1194,98 @@ const checkForDemoRoundEnd = () => {
 }
 
 const checkDemoRoundCompletion = () => {
-  const activePlayers = players.filter(p => !p.isFolded && p.id)
+  const activePlayers = players.filter(p => p.id && !p.isFolded)
   
+  console.log('🎯 [checkDemoRoundCompletion] ПОДРОБНАЯ ПРОВЕРКА:', {
+    activePlayers: activePlayers.map(p => ({
+      name: p.name,
+      bet: p.currentBet,
+      folded: p.isFolded,
+      hasActed: p.hasActed,
+      isDark: p.isDark
+    })),
+    currentMaxBet: getCurrentBet(),
+    round: gameState.currentRound
+  })
+
+  // 🎯 1. Если остался 1 игрок - игра завершается
   if (activePlayers.length === 1) {
+    console.log('🎯 Остался 1 игрок - завершаем игру')
     endDemoGame(activePlayers[0])
     return true
   }
+
+  // 🎯 2. Проверяем, все ли активные игроки сделали ход в этом круге
+  const playersWhoNeedToAct = activePlayers.filter(p => !p.hasActed)
   
+  console.log('🔍 Игроки, которые еще не сделали ход:', 
+    playersWhoNeedToAct.map(p => p.name)
+  )
+
+  // Если есть игроки, которые еще не ходили - раунд не завершен
+  if (playersWhoNeedToAct.length > 0) {
+    console.log('❌ Раунд не завершен: есть игроки без хода')
+    console.log('🔍 Детали неходивших игроков:', playersWhoNeedToAct.map(p => ({
+      name: p.name,
+      hasActed: p.hasActed,
+      currentBet: p.currentBet
+    })))
+    return false
+  }
+
+  // 🎯 3. Проверяем, что все НЕСБРОСИВШИЕ игроки имеют одинаковые ставки
+  const nonFoldedPlayers = activePlayers.filter(p => !p.isFolded)
   const currentMaxBet = getCurrentBet()
   
-  console.log('🎯 Проверка завершения раунда:', {
-    activePlayers: activePlayers.map(p => ({ 
-      name: p.name, 
-      bet: p.currentBet, 
-      folded: p.isFolded,
-      hasActed: p.hasActed // ← ДОБАВЬ ДЛЯ ДЕБАГА
-    })),
-    currentMaxBet: currentMaxBet
-  })
-  
-  // 🎯 ИСПРАВЛЕННАЯ ЛОГИКА:
-  // Раунд завершается когда ВСЕ активные игроки либо:
-  // 1. Сбросили карты ИЛИ
-  // 2. Сделали ход в этом круге (hasActed = true) И их ставки равны
-  
-  const allPlayersActed = activePlayers.every(player => 
-    player.isFolded || player.hasActed
+  const allBetsEqual = nonFoldedPlayers.every(player => 
+    player.currentBet === currentMaxBet
   )
-  
-  const allBetsEqual = activePlayers.filter(p => !p.isFolded)
-    .every(player => player.currentBet === currentMaxBet)
-  
-  console.log('🎯 Условия завершения:', {
-    allPlayersActed,
-    allBetsEqual, 
-    activePlayersCount: activePlayers.length,
-    playersNotActed: activePlayers.filter(p => !p.isFolded && p.currentBet === 0).map(p => p.name)
+
+  console.log('🔍 Проверка равенства ставок:', {
+    nonFoldedPlayers: nonFoldedPlayers.map(p => ({ name: p.name, bet: p.currentBet })),
+    currentMaxBet: currentMaxBet,
+    allBetsEqual: allBetsEqual
   })
+
+  if (!allBetsEqual) {
+    console.log('❌ Ставки не равны - продолжаем торги')
+    return false
+  }
+
+  // 🎯 4. ВСЕ УСЛОВИЯ ВЫПОЛНЕНЫ - завершаем раунд
+  console.log('✅ ВСЕ УСЛОВИЯ ВЫПОЛНЕНЫ! Завершаем раунд', gameState.currentRound)
   
-  if (allPlayersActed && allBetsEqual && activePlayers.length > 1) {
-    if (gameState.currentRound < 3) {
-      gameState.currentRound++
-      gameState.baseBet = currentMaxBet
-      
-      console.log(`🔄 Переход на раунд ${gameState.currentRound}, базовая ставка: ${gameState.baseBet}🪙`)
-      
-      players.forEach(player => {
-        if (player.id && !player.isFolded) {
-          player.currentBet = 0
-        }
-      })
-      
-      const activePlayers = players.filter(p => !p.isFolded && p.id)
-      const dealerIndex = activePlayers.findIndex(p => p.id === gameState.dealerId)
-      const firstPlayerIndex = (dealerIndex + 1) % activePlayers.length
-      const firstPlayer = activePlayers[firstPlayerIndex]
-      
-      gameState.currentPlayerId = firstPlayer.id
-      
-      console.log('🎯 Новый раунд начат! Первый ход у:', firstPlayer.name)
-    } else {
-      determineDemoWinner()
-    }
-    return true
+  if (gameState.currentRound < 3) {
+    // Переход на следующий раунд
+    gameState.currentRound++
+    console.log(`🔄 ПЕРЕХОД НА РАУНД ${gameState.currentRound}`)
+    
+    // Сбрасываем флаги действий для нового раунда
+    console.log('🔍 Сбрасываем флаги hasActed для нового раунда')
+    activePlayers.forEach(player => {
+      console.log(`🔄 Сброс ${player.name}: hasActed = false`)
+      player.hasActed = false
+    })
+    
+    // Находим первого игрока после дилера
+    const dealerIndex = activePlayers.findIndex(p => p.id === gameState.dealerId)
+    const firstPlayerIndex = dealerIndex !== -1 ? (dealerIndex + 1) % activePlayers.length : 0
+    const firstPlayer = activePlayers[firstPlayerIndex]
+    
+    gameState.currentPlayerId = firstPlayer.id
+    
+    console.log('🎯 Новый раунд начат!', {
+      round: gameState.currentRound,
+      firstPlayer: firstPlayer.name,
+      activePlayers: activePlayers.length
+    })
+  } else {
+    // Последний раунд - определяем победителя
+    console.log('🏁 ПОСЛЕДНИЙ РАУНД - определяем победителя')
+    determineDemoWinner()
   }
   
-  return false
+  return true
 }
 
 const determineDemoWinner = () => {
