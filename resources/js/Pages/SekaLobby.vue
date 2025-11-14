@@ -1,76 +1,95 @@
 <!-- resources/js/Pages/SekaLobby.vue -->
 <template>
-  <div class="min-h-screen bg-gradient-to-br from-gray-900 to-emerald-900 text-white p-4">
-    <!-- Compact Header -->
-    <div class="max-w-6xl mx-auto mb-6">
-      <div class="flex justify-between items-center">
-        <div class="flex items-center gap-4">
-          <h1 class="text-2xl font-bold text-emerald-400">SEKA</h1>
-          <div class="text-sm text-gray-300">
-            <span class="font-bold">{{ totalPlayers }}</span> игроков онлайн • 
-            <span class="font-bold">{{ availableTablesCount }}</span> столов доступно
+  <div class="lobby-container">
+    <!-- Header -->
+    <div class="lobby-header">
+      <div class="header-content">
+        <div class="header-left">
+          <h1 class="logo">🎴 SEKA</h1>
+          <div class="stats">
+            <span class="stat-item">
+              <span class="stat-value">{{ totalPlayers }}</span>
+              <span class="stat-label">игроков онлайн</span>
+            </span>
+            <span class="stat-divider">•</span>
+            <span class="stat-item">
+              <span class="stat-value">{{ availableTablesCount }}</span>
+              <span class="stat-label">столов доступно</span>
+            </span>
           </div>
         </div>
-        <div class="flex items-center gap-3">
-          <div class="flex items-center gap-2">
-            <div class="w-6 h-6 bg-emerald-500 rounded-full flex items-center justify-center text-xs">
+        
+        <div class="header-right">
+          <div class="user-info">
+            <div class="user-avatar">
               {{ user.name.charAt(0) }}
             </div>
-            <span class="text-sm text-gray-300">{{ user.name }}</span>
+            <span class="user-name">{{ user.name }}</span>
           </div>
-          <Link href="/dashboard" class="text-sm px-3 py-1 bg-gray-700 rounded hover:bg-gray-600">
+          <Link href="/dashboard" class="profile-btn">
             Профиль
           </Link>
-          <button @click="logout" class="text-sm px-3 py-1 bg-red-600 rounded hover:bg-red-700">
+          <button @click="logout" class="logout-btn">
             Выйти
           </button>
         </div>
       </div>
     </div>
 
-    <!-- Compact Tables Grid -->
-    <div class="max-w-6xl mx-auto">
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-        <GameRoomCard
-          v-for="table in gameTables"
-          :key="table.id"
-          :table="table"
-          @join="handleJoinTable"
-        />
+    <!-- Main Content -->
+    <div class="lobby-content">
+      <!-- Tables Grid -->
+      <div class="tables-section">
+        <h2 class="section-title">Игровые столы</h2>
+        <div class="tables-grid">
+          <GameRoomCard
+            v-for="table in gameTables"
+            :key="table.id"
+            :table="table"
+            @join="handleJoinTable"
+          />
+        </div>
       </div>
 
       <!-- Quick Create Section -->
-      <div class="bg-gray-800/50 rounded-lg border border-emerald-500/30 p-4">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-4">
-            <select
-              v-model="newTableType"
-              class="px-3 py-2 bg-gray-700 border border-gray-600 rounded text-sm focus:ring-2 focus:ring-emerald-500 text-white"
-            >
-              <option value="novice">Новички (5-25)</option>
-              <option value="amateur">Любители (10-100)</option>
-              <option value="pro">Профи (25-250)</option>
-              <option value="master">Мастера (50-500)</option>
-            </select>
+      <div class="create-section">
+        <div class="create-card">
+          <h3 class="create-title">Создать новый стол</h3>
+          <div class="create-controls">
+            <div class="control-group">
+              <label class="control-label">Уровень ставок:</label>
+              <select
+                v-model="newTableType"
+                class="control-select"
+              >
+                <option value="novice">🥉 Новички (5-25🪙)</option>
+                <option value="amateur">🥈 Любители (10-100🪙)</option>
+                <option value="pro">🥇 Профи (25-250🪙)</option>
+                <option value="master">🏆 Мастера (50-500🪙)</option>
+              </select>
+            </div>
             
-            <select
-              v-model="newTablePlayers"
-              class="px-3 py-2 bg-gray-700 border border-gray-600 rounded text-sm focus:ring-2 focus:ring-emerald-500 text-white"
+            <div class="control-group">
+              <label class="control-label">Количество игроков:</label>
+              <select
+                v-model="newTablePlayers"
+                class="control-select"
+              >
+                <option value="2">2 игрока</option>
+                <option value="3">3 игрока</option>
+                <option value="4">4 игрока</option>
+                <option value="5">5 игроков</option>
+                <option value="6">6 игроков</option>
+              </select>
+            </div>
+            
+            <button
+              @click="createNewTable"
+              class="create-btn"
             >
-              <option value="2">2 игрока</option>
-              <option value="3">3 игрока</option>
-              <option value="4">4 игрока</option>
-              <option value="5">5 игроков</option>
-              <option value="6">6 игроков</option>
-            </select>
+              🎯 Создать стол
+            </button>
           </div>
-          
-          <button
-            @click="createNewTable"
-            class="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded text-sm font-medium transition-colors"
-          >
-            Создать стол
-          </button>
         </div>
       </div>
     </div>
@@ -113,11 +132,10 @@ const availableTablesCount = computed(() => {
 
 // Methods
 const initializeTables = () => {
-  // Создаем начальные столы с разным количеством игроков для реализма
   gameTables.value = [
-    createTable(TABLE_TYPES.novice, 0),
+    createTable(TABLE_TYPES.novice, 2),
     createTable(TABLE_TYPES.amateur, 1),
-    createTable(TABLE_TYPES.pro, 2),
+    createTable(TABLE_TYPES.pro, 3),
     createTable(TABLE_TYPES.master, 0)
   ]
 }
@@ -138,20 +156,37 @@ const createTable = (config, initialPlayers = 0) => {
   }
 }
 
-const handleJoinTable = (tableId) => {
+const handleJoinTable = async (tableId) => {
   const table = gameTables.value.find(t => t.id === tableId)
   if (!table || table.status === 'full') return
 
-  table.players++
-  
-  if (table.players >= table.maxPlayers) {
-    table.status = 'full'
-    createNewTableOfType(table.type)
+  try {
+    // 🎯 Сначала присоединяемся через API
+    const response = await fetch(`/api/seka/games/${tableId}/join`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      }
+    })
+
+    if (response.ok) {
+      table.players++
+      
+      if (table.players >= table.maxPlayers) {
+        table.status = 'full'
+        createNewTableOfType(table.type)
+      }
+      
+      // ✅ Успешно присоединились - переходим в игру
+      window.location.href = `/game/${tableId}`
+    } else {
+      const errorData = await response.json()
+      alert(`Ошибка: ${errorData.message || 'Не удалось присоединиться'}`)
+    }
+  } catch (error) {
+    console.error('❌ Join game error:', error)
+    alert('Ошибка присоединения к игре')
   }
-  
-  setTimeout(() => {
-    router.visit(`/game/${tableId}`)
-  }, 500)
 }
 
 const createNewTableOfType = (type) => {
@@ -160,14 +195,37 @@ const createNewTableOfType = (type) => {
   gameTables.value.push(newTable)
 }
 
-const createNewTable = () => {
+const createNewTable = async () => {
   const config = TABLE_TYPES[newTableType.value]
   const newTable = createTable(config, 1)
-  gameTables.value.push(newTable)
   
-  setTimeout(() => {
-    router.visit(`/game/${newTable.id}`)
-  }, 500)
+  try {
+    // 🎯 Создаем стол через API
+    const response = await fetch('/api/seka/games', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        table_type: newTableType.value,
+        max_players: newTablePlayers.value
+      })
+    })
+
+    if (response.ok) {
+      const gameData = await response.json()
+      gameTables.value.push(newTable)
+      
+      // ✅ Успешно создали - переходим в игру
+      window.location.href = `/game/${gameData.id || newTable.id}`
+    } else {
+      const errorData = await response.json()
+      alert(`Ошибка: ${errorData.message || 'Не удалось создать стол'}`)
+    }
+  } catch (error) {
+    console.error('❌ Create table error:', error)
+    alert('Ошибка создания стола')
+  }
 }
 
 const logout = () => {
@@ -197,3 +255,259 @@ onMounted(() => {
   simulatePlayerActivity()
 })
 </script>
+
+<style scoped>
+.lobby-container {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #0a2f0a 0%, #1a5a1a 100%);
+  color: white;
+  padding: 20px;
+}
+
+.lobby-header {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 15px;
+  padding: 20px;
+  margin-bottom: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+}
+
+.header-content {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 30px;
+}
+
+.logo {
+  font-size: 2.5rem;
+  font-weight: bold;
+  color: #10b981;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+.stats {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  font-size: 0.9rem;
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.stat-value {
+  font-size: 1.2rem;
+  font-weight: bold;
+  color: #fbbf24;
+}
+
+.stat-label {
+  font-size: 0.8rem;
+  color: #9ca3af;
+  margin-top: 2px;
+}
+
+.stat-divider {
+  color: #6b7280;
+  font-weight: bold;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 8px 15px;
+  border-radius: 25px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.user-avatar {
+  width: 32px;
+  height: 32px;
+  background: #10b981;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 0.9rem;
+}
+
+.user-name {
+  font-size: 0.9rem;
+  color: #e5e7eb;
+}
+
+.profile-btn, .logout-btn {
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  transition: all 0.2s;
+  border: none;
+  cursor: pointer;
+}
+
+.profile-btn {
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.profile-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.logout-btn {
+  background: #dc2626;
+  color: white;
+}
+
+.logout-btn:hover {
+  background: #b91c1c;
+}
+
+.lobby-content {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.tables-section {
+  margin-bottom: 30px;
+}
+
+.section-title {
+  font-size: 1.8rem;
+  font-weight: bold;
+  color: #e5e7eb;
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+.tables-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
+  margin-bottom: 30px;
+}
+
+.create-section {
+  display: flex;
+  justify-content: center;
+}
+
+.create-card {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 15px;
+  padding: 25px;
+  border: 2px solid #10b981;
+  backdrop-filter: blur(10px);
+  width: 100%;
+  max-width: 500px;
+}
+
+.create-title {
+  font-size: 1.3rem;
+  font-weight: bold;
+  color: #10b981;
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+.create-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.control-label {
+  font-size: 0.9rem;
+  color: #d1d5db;
+  font-weight: 500;
+}
+
+.control-select {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid #4b5563;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: white;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+
+.control-select:focus {
+  outline: none;
+  border-color: #10b981;
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+}
+
+.create-btn {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: white;
+  border: none;
+  border-radius: 10px;
+  padding: 12px 24px;
+  font-size: 1rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-top: 10px;
+}
+
+.create-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+}
+
+/* Адаптивность */
+@media (max-width: 768px) {
+  .lobby-container {
+    padding: 15px;
+  }
+  
+  .header-content {
+    flex-direction: column;
+    gap: 15px;
+    text-align: center;
+  }
+  
+  .header-left {
+    flex-direction: column;
+    gap: 15px;
+  }
+  
+  .tables-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .create-card {
+    padding: 20px;
+  }
+}
+</style>
