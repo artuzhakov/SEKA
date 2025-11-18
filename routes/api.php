@@ -200,6 +200,24 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/{gameId}/timers', [GameController::class, 'getTimers']);
         Route::get('/{gameId}/test-players', [GameController::class, 'getTestPlayers']);
         Route::post('/{gameId}/check-timeouts', [GameController::class, 'checkTimeouts']);
+
+        // 🎯 Лобби - получение списка игр
+        Route::get('/lobby', [GameController::class, 'getLobbyGames']);
+        
+        // 🎯 Создание новой игры
+        Route::post('/games', [GameController::class, 'createGame']);
+        
+        // 🎯 Присоединение к игре (основной endpoint)
+        Route::post('/games/{gameId}/join', [GameController::class, 'joinGame']);
+        
+        // 🎯 Получение состояния игры
+        Route::get('/games/{gameId}/state', [GameController::class, 'getGameState']);
+        
+        // 🎯 Готовность игрока
+        Route::post('/games/{gameId}/ready', [GameController::class, 'markReady']);
+
+        Route::get('/games/{gameId}/get-or-create', [GameController::class, 'getOrCreateGame']);
+
     });
 
     // 🎯 Legacy game routes (for compatibility)
@@ -321,4 +339,10 @@ Route::middleware('auth:sanctum')->group(function () {
 // 🎯 Public Pusher test page route
 Route::get('/pusher-test', function () {
     return inertia('PusherTest');
+});
+
+// 🎯 PUBLIC LOBBY ROUTES (для тестирования без авторизации)
+Route::prefix('public/seka')->group(function () {
+    Route::get('/lobby', [GameController::class, 'getLobbyGames']);
+    Route::post('/games/{gameId}/join', [GameController::class, 'joinGame']);
 });

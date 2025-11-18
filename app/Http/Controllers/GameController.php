@@ -987,19 +987,21 @@ class GameController extends Controller
     }
 
     /**
-     * 🎯 ПРИСОЕДИНИТЬСЯ К ИГРЕ (новый метод)
+     * 🎯 ПРИСОЕДИНИТЬСЯ К ИГРЕ (С ОБРАБОТКОЙ ДУБЛИРОВАНИЯ)
      */
     public function joinGame(Request $request, int $gameId): JsonResponse
     {
         try {
-            $validated = $request->validate([
-                'user_id' => 'required|integer|min:1',
-                'player_name' => 'sometimes|string|max:50'
-            ]);
+            $userId = $request->input('user_id') ?? Auth::id() ?? 1;
+            
+            if (!$userId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User ID is required'
+                ], 400);
+            }
 
-            $userId = (int)$validated['user_id'];
-            $playerName = $validated['player_name'] ?? "Player_{$userId}";
-
+            $playerName = $request->input('player_name') ?? "Player_{$userId}";
             $game = $this->getGameById($gameId);
 
             \Log::info("🎮 Player joining game", [
@@ -1009,34 +1011,51 @@ class GameController extends Controller
                 'current_players' => count($game->getPlayers())
             ]);
 
-            // Проверяем, можно ли присоединиться к игре
-            if (!$this->canJoinGame($game)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Cannot join game. Current status: ' . $game->getStatus()->value
-                ], 400);
+            // 🎯 ПРОСТАЯ ПРОВЕРКА СТАТУСА ИГРЫ
+            if ($game->getStatus() !== \App\Domain\Game\Enums\GameStatus::WAITING) {
+                throw new \DomainException('Игра уже началась или завершена');
             }
 
-            // Проверяем, не присоединен ли уже игрок
-            if ($this->isPlayerAlreadyJoined($game, $userId)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Player already joined this game'
-                ], 400);
+            $player = null;
+            
+            // 🎯 ПРОБУЕМ ДОБАВИТЬ ИГРОКА
+            try {
+                $player = $this->gameService->addPlayerToGame($game, $userId, $playerName);
+                \Log::info("🎯 New player added to game");
+            } catch (\DomainException $e) {
+                // 🎯 ЕСЛИ ИГРОК УЖЕ В ИГРЕ - НАХОДИМ ЕГО
+                if (str_contains($e->getMessage(), 'already joined')) {
+                    \Log::info("🎯 Player already in game - finding existing player");
+                    
+                    foreach ($game->getPlayers() as $existingPlayer) {
+                        $playerUserId = $existingPlayer->getUserId();
+                        
+                        if (is_object($playerUserId) && method_exists($playerUserId, 'toInt')) {
+                            if ($playerUserId->toInt() === $userId) {
+                                $player = $existingPlayer;
+                                break;
+                            }
+                        } elseif ((int)$playerUserId === $userId) {
+                            $player = $existingPlayer;
+                            break;
+                        }
+                    }
+                    
+                    if (!$player) {
+                        throw new \DomainException('Player not found in game');
+                    }
+                } else {
+                    throw $e; // Другие исключения пробрасываем дальше
+                }
             }
 
-            // Проверяем максимальное количество игроков
-            if (count($game->getPlayers()) >= 6) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Game is full (max 6 players)'
-                ], 400);
+            // Сохраняем игру (если был добавлен новый игрок)
+            if ($player) {
+                $repository = new \App\Domain\Game\Repositories\CachedGameRepository();
+                $repository->save($game);
             }
 
-            // Добавляем игрока в игру
-            $player = $this->gameService->addPlayerToGame($game, $userId, $playerName);
-
-            // Форматируем данные для события
+            // Форматируем данные для ответа
             $playerData = [
                 'id' => $userId,
                 'name' => $playerName,
@@ -1049,24 +1068,26 @@ class GameController extends Controller
             // Форматируем список всех игроков
             $playersList = $this->formatPlayersListForEvent($game);
 
-            \Log::info("🎮 Player successfully joined", [
+            \Log::info("🎮 Player successfully processed", [
                 'game_id' => $gameId,
                 'user_id' => $userId,
                 'player_position' => $player->getPosition(),
-                'new_players_count' => count($game->getPlayers())
+                'players_count' => count($game->getPlayers())
             ]);
 
-            // Отправляем WebSocket событие ВАШЕГО формата
-            broadcast(new \App\Events\PlayerJoined(
-                gameId: $gameId,
-                player: $playerData,
-                playersList: $playersList,
-                currentPlayersCount: count($game->getPlayers())
-            ));
+            // Отправляем WebSocket событие (только для новых игроков)
+            if ($player->getPosition() > count($game->getPlayers()) - 1) { // Примерная проверка нового игрока
+                broadcast(new \App\Events\PlayerJoined(
+                    gameId: $gameId,
+                    player: $playerData,
+                    playersList: $playersList,
+                    currentPlayersCount: count($game->getPlayers())
+                ));
+            }
 
             return response()->json([
                 'success' => true,
-                'message' => 'Successfully joined the game',
+                'message' => 'Успешно присоединились к игре',
                 'player' => $playerData,
                 'game' => [
                     'id' => $gameId,
@@ -1086,7 +1107,7 @@ class GameController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Failed to join game: ' . $e->getMessage()
+                'message' => 'Ошибка присоединения к игре: ' . $e->getMessage()
             ], 400);
         }
     }
@@ -1136,6 +1157,103 @@ class GameController extends Controller
                 'message' => 'Failed to leave game: ' . $e->getMessage()
             ], 400);
         }
+    }
+
+    /**
+     * 🎯 ДОБАВИТЬ ИГРОКА В СУЩЕСТВУЮЩУЮ ИГРУ
+     */
+    public function addPlayerToGame(Game $game, int $userId, string $playerName = null): \App\Domain\Game\Entities\Player
+    {
+        \Log::info("🎯 Adding player to game", [
+            'game_id' => $game->getId()->toInt(),
+            'user_id' => $userId,
+            'current_players' => count($game->getPlayers())
+        ]);
+
+        // Проверяем максимальное количество игроков
+        if (count($game->getPlayers()) >= 6) {
+            throw new \DomainException('Game is full (max 6 players)');
+        }
+
+        // Проверяем, не присоединен ли уже игрок
+        foreach ($game->getPlayers() as $existingPlayer) {
+            $existingUserId = $existingPlayer->getUserId();
+            
+            if (is_object($existingUserId) && method_exists($existingUserId, 'toInt')) {
+                if ($existingUserId->toInt() === $userId) {
+                    throw new \DomainException('Player already joined this game');
+                }
+            } elseif ((int)$existingUserId === $userId) {
+                throw new \DomainException('Player already joined this game');
+            }
+        }
+
+        // Создаем нового игрока
+        $playerId = PlayerId::fromInt($userId);
+        $playerName = $playerName ?: "Player_{$userId}";
+        
+        $player = new \App\Domain\Game\Entities\Player(
+            id: $playerId,
+            userId: $playerId, // или создайте отдельный UserId если нужно
+            name: $playerName,
+            position: count($game->getPlayers()) + 1,
+            balance: 1000, // начальный баланс
+            status: PlayerStatus::WAITING
+        );
+
+        // Добавляем игрока в игру
+        $game->addPlayer($player);
+
+        \Log::info("🎯 Player added successfully", [
+            'game_id' => $game->getId()->toInt(),
+            'user_id' => $userId,
+            'player_position' => $player->getPosition(),
+            'new_players_count' => count($game->getPlayers())
+        ]);
+
+        return $player;
+    }
+
+    /**
+     * 🎯 УДАЛИТЬ ИГРОКА ИЗ ИГРЫ
+     */
+    public function removePlayerFromGame(Game $game, int $userId): void
+    {
+        \Log::info("🎯 Removing player from game", [
+            'game_id' => $game->getId()->toInt(),
+            'user_id' => $userId
+        ]);
+
+        $players = $game->getPlayers();
+        $playerToRemove = null;
+
+        // Находим игрока для удаления
+        foreach ($players as $index => $player) {
+            $playerUserId = $player->getUserId();
+            
+            if (is_object($playerUserId) && method_exists($playerUserId, 'toInt')) {
+                if ($playerUserId->toInt() === $userId) {
+                    $playerToRemove = $player;
+                    break;
+                }
+            } elseif ((int)$playerUserId === $userId) {
+                $playerToRemove = $player;
+                break;
+            }
+        }
+
+        if (!$playerToRemove) {
+            throw new \DomainException('Player not found in game');
+        }
+
+        // Удаляем игрока из игры
+        $game->removePlayer($playerToRemove);
+
+        \Log::info("🎯 Player removed successfully", [
+            'game_id' => $game->getId()->toInt(),
+            'user_id' => $userId,
+            'remaining_players' => count($game->getPlayers())
+        ]);
     }
 
     /**
@@ -1566,6 +1684,172 @@ class GameController extends Controller
         ];
         
         return $combinations[$points] ?? "Комбинация ($points)";
+    }
+
+    /**
+     * 🎯 ПОЛУЧИТЬ ИГРЫ ДЛЯ ЛОББИ (ИСПРАВЛЕННАЯ ВЕРСИЯ)
+     */
+    public function getLobbyGames(): JsonResponse
+    {
+        try {
+            $repository = new \App\Domain\Game\Repositories\CachedGameRepository();
+            
+            // 🎯 ИСПРАВЛЕНИЕ: findAll() возвращает массив, а не коллекцию
+            $allGames = $repository->findAll(); // Это массив!
+            $games = array_filter($allGames, function($game) {
+                return $game->getStatus() === \App\Domain\Game\Enums\GameStatus::WAITING;
+            });
+
+            $formattedGames = [];
+            foreach ($games as $game) {
+                $players = $game->getPlayers();
+                
+                $formattedGames[] = [
+                    'id' => $game->getId()->toInt(),
+                    'name' => "Стол #" . $game->getId()->toInt(),
+                    'status' => $game->getStatus()->value,
+                    'players_count' => count($players),
+                    'max_players' => 6,
+                    'base_bet' => 5, // Базовая ставка стола
+                    'min_balance' => 50, // Минимальный баланс
+                    'created_at' => now()->toISOString(),
+                    'players' => array_map(function($player) {
+                        return [
+                            'id' => $player->getUserId(),
+                            'name' => "Игрок_" . $player->getUserId(),
+                            'is_ready' => $player->isReady(),
+                            'position' => $player->getPosition()
+                        ];
+                    }, $players)
+                ];
+            }
+
+            \Log::info("🎯 Lobby games requested", [
+                'games_count' => count($formattedGames)
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'games' => $formattedGames,
+                'total' => count($formattedGames)
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error("❌ Failed to get lobby games", [
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to load lobby games',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * 🎯 СОЗДАТЬ НОВУЮ ИГРУ
+     */
+    public function createGame(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'user_id' => 'required|integer|min:1',
+                'table_type' => 'sometimes|string|in:novice,amateur,pro,master',
+                'player_name' => 'sometimes|string|max:50'
+            ]);
+
+            $userId = (int)$validated['user_id'];
+            $tableType = $validated['table_type'] ?? 'novice';
+            $playerName = $validated['player_name'] ?? "Player_{$userId}";
+
+            // Создаем игру с игроком
+            $game = $this->gameService->createNewGameWithPlayer($userId, $tableType);
+            
+            // Сохраняем игру
+            $repository = new \App\Domain\Game\Repositories\CachedGameRepository();
+            $repository->save($game);
+
+            \Log::info("🎯 New game created via API", [
+                'game_id' => $game->getId()->toInt(),
+                'user_id' => $userId,
+                'table_type' => $tableType
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Game created successfully',
+                'game' => [
+                    'id' => $game->getId()->toInt(),
+                    'name' => "Стол #" . $game->getId()->toInt(),
+                    'status' => $game->getStatus()->value,
+                    'table_type' => $tableType,
+                    'base_bet' => $this->getTableConfig($tableType)['base_bet'],
+                    'min_balance' => $this->getTableConfig($tableType)['min_balance'],
+                    'players_count' => 1,
+                    'max_players' => 6
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error("❌ Failed to create game", [
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to create game: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * 🎯 КОНФИГУРАЦИЯ СТОЛОВ
+     */
+    private function getTableConfig(string $tableType): array
+    {
+        return match($tableType) {
+            'novice' => ['base_bet' => 5, 'min_balance' => 50, 'name' => 'Новички'],
+            'amateur' => ['base_bet' => 10, 'min_balance' => 100, 'name' => 'Любители'],
+            'pro' => ['base_bet' => 25, 'min_balance' => 250, 'name' => 'Профи'],
+            'master' => ['base_bet' => 50, 'min_balance' => 500, 'name' => 'Мастера'],
+            default => ['base_bet' => 5, 'min_balance' => 50, 'name' => 'Новички']
+        };
+    }
+
+    /**
+     * 🎯 Создать или получить игру при прямом переходе
+     */
+    public function getOrCreateGame(int $gameId): JsonResponse
+    {
+        try {
+            $repository = new \App\Domain\Game\Repositories\CachedGameRepository();
+            $game = $repository->find(\App\Domain\Game\ValueObjects\GameId::fromInt($gameId));
+            
+            if (!$game) {
+                // Создаем новую игру через GameService
+                $dto = new \App\Application\DTO\StartGameDTO(
+                    roomId: $gameId,
+                    playerIds: [] // Пустой массив - игроки присоединятся позже
+                );
+                
+                $game = $this->gameService->startNewGame($dto);
+                $repository->save($game);
+                
+                \Log::info("🎮 Created new game via getOrCreateGame: {$gameId}");
+            }
+
+            return response()->json([
+                'success' => true,
+                'game' => $this->formatGameForApi($game)
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage()
+            ], 400);
+        }
     }
     
 }

@@ -31,10 +31,12 @@ class CachedGameRepository
             return $game;
         }
         
-        // ✅ ИСПРАВЛЕНИЕ: возвращаем null если игра не найдена
-        \Log::info("❌ Game {$id} not found in cache");
-        return null;
+        // ✅ ИСПРАВЛЕНИЕ: создаем новую игру если не найдена
+        \Log::info("🎮 Creating NEW game for ID: {$id}");
+        $game = $this->createNewGame($id);
+        $this->save($game);
         
+        return $game;
     }
 
     public function save(Game $game): void
@@ -48,7 +50,7 @@ class CachedGameRepository
 
     private function createNewGame(int $gameId): Game
     {
-        // 🎯 Создаем ПУСТУЮ игру без игроков
+        // 🎯 Создаем новую игру в статусе ожидания
         $game = new Game(
             GameId::fromInt($gameId),
             GameStatus::WAITING,
@@ -56,8 +58,7 @@ class CachedGameRepository
             GameMode::OPEN
         );
 
-        // 🎯 НЕ добавляем игроков здесь - они будут добавлены через GameService
-        \Log::info("Created EMPTY game {$gameId}");
+        \Log::info("🎯 Created NEW game {$gameId} with status: " . $game->getStatus()->value);
 
         return $game;
     }
@@ -77,4 +78,27 @@ class CachedGameRepository
         }
         \Log::info("🧹 Cleared ALL games from cache");
     }
+
+    /**
+     * 🎯 Получить все игры из кэша
+     */
+    public function findAll(): array
+    {
+        $games = [];
+        
+        // 🎯 Проходим по возможным ID игр (1-100)
+        for ($i = 1; $i <= 100; $i++) {
+            $cacheKey = self::CACHE_KEY_PREFIX . $i;
+            $game = Cache::get($cacheKey);
+            
+            if ($game) {
+                $games[] = $game;
+            }
+        }
+        
+        \Log::info("Found " . count($games) . " games in cache");
+        
+        return $games;
+    }
+    
 }

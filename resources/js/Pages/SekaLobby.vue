@@ -161,31 +161,148 @@ const handleJoinTable = async (tableId) => {
   if (!table || table.status === 'full') return
 
   try {
-    // 🎯 Сначала присоединяемся через API
-    const response = await fetch(`/api/seka/games/${tableId}/join`, {
+    console.log('🎯 Joining table:', tableId)
+    
+    // 🎯 ИСПРАВЛЕНИЕ: Используем публичные маршруты БЕЗ CSRF
+    const response = await fetch(`/api/public/seka/games/${tableId}/join`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-      }
+        'Accept': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest'
+        // 🎯 УБИРАЕМ X-CSRF-TOKEN - он не нужен для публичных маршрутов
+      },
+      body: JSON.stringify({
+        user_id: props.user?.id || 1,
+        player_name: props.user?.name || 'Player'
+      })
     })
 
+    console.log('🎯 Response status:', response.status)
+    
     if (response.ok) {
-      table.players++
+      const data = await response.json()
+      console.log('✅ Join successful:', data)
       
-      if (table.players >= table.maxPlayers) {
-        table.status = 'full'
-        createNewTableOfType(table.type)
-      }
+      // 🎯 ОБНОВЛЯЕМ список игр после присоединения
+      await loadRealGames()
       
       // ✅ Успешно присоединились - переходим в игру
       window.location.href = `/game/${tableId}`
     } else {
-      const errorData = await response.json()
-      alert(`Ошибка: ${errorData.message || 'Не удалось присоединиться'}`)
+      const errorText = await response.text()
+      console.error('❌ Join failed:', response.status, errorText)
+      
+      try {
+        const errorData = JSON.parse(errorText)
+        
+        // 🎯 ВАЖНОЕ ИСПРАВЛЕНИЕ: Обработка "игрок уже в игре"
+        if (errorData.message?.includes('already joined') || 
+            errorData.message?.includes('уже присоединился')) {
+          console.log('ℹ️ Player already in game, redirecting...')
+          window.location.href = `/game/${tableId}`
+          return // 🎯 Выходим из функции
+        }
+        
+        alert(`Ошибка: ${errorData.message || 'Не удалось присоединиться'}`)
+      } catch {
+        alert(`Ошибка сервера: ${response.status}. Проверьте консоль для деталей.`)
+      }
     }
   } catch (error) {
     console.error('❌ Join game error:', error)
-    alert('Ошибка присоединения к игре')
+    alert('Ошибка присоединения к игре: ' + error.message)
+  }
+}
+
+const createNewTable = async () => {
+  try {
+    console.log('🎯 Creating new table...')
+    
+    // 🎯 ИСПРАВЛЕНИЕ: Используем публичные маршруты БЕЗ CSRF
+    const response = await fetch('/api/public/seka/games', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest'
+        // 🎯 УБИРАЕМ X-CSRF-TOKEN
+      },
+      body: JSON.stringify({
+        user_id: props.user?.id || 1,
+        table_type: newTableType.value,
+        player_name: props.user?.name || 'Player'
+      })
+    })
+
+    console.log('🎯 Create response status:', response.status)
+    
+    if (response.ok) {
+      const gameData = await response.json()
+      console.log('✅ Create successful:', gameData)
+      
+      // 🎯 ОБНОВЛЯЕМ список игр после создания
+      await loadRealGames()
+      
+      // ✅ Успешно создали - переходим в игру
+      const gameId = gameData.game?.id || gameData.id
+      if (gameId) {
+        window.location.href = `/game/${gameId}`
+      } else {
+        alert('Ошибка: не получен ID игры')
+      }
+    } else {
+      const errorText = await response.text()
+      console.error('❌ Create failed:', response.status, errorText)
+      
+      try {
+        const errorData = JSON.parse(errorText)
+        alert(`Ошибка: ${errorData.message || 'Не удалось создать стол'}`)
+      } catch {
+        alert(`Ошибка сервера: ${response.status}`)
+      }
+    }
+  } catch (error) {
+    console.error('❌ Create table error:', error)
+    alert('Ошибка создания стола: ' + error.message)
+  }
+}
+
+// 🎯 ДОБАВЬТЕ fallback если API не работает
+const loadRealGames = async () => {
+  try {
+    console.log('🎯 Loading real games from API...')
+    const response = await fetch('/api/public/seka/lobby', {
+      headers: {
+        'Accept': 'application/json'
+      }
+    })
+    
+    if (response.ok) {
+      const data = await response.json()
+      console.log('✅ Real games loaded:', data)
+      
+      if (data.success && data.games) {
+        gameTables.value = data.games.map(game => ({
+          id: game.id,
+          name: game.name || `Стол #${game.id}`,
+          minBet: game.base_bet || 5,
+          maxBet: (game.base_bet || 5) * 5,
+          buyIn: game.base_bet || 5,
+          players: game.players_count || 0,
+          maxPlayers: game.max_players || 6,
+          status: game.players_count >= (game.max_players || 6) ? 'full' : 'available',
+          color: getColorByBet(game.base_bet || 5),
+          type: getTypeByBet(game.base_bet || 5)
+        }))
+      }
+    } else {
+      console.warn('⚠️ Could not load real games, using mock data')
+      initializeTables() // fallback на мок данные
+    }
+  } catch (error) {
+    console.error('❌ Error loading real games:', error)
+    initializeTables() // fallback на мок данные
   }
 }
 
@@ -193,39 +310,6 @@ const createNewTableOfType = (type) => {
   const config = TABLE_TYPES[type]
   const newTable = createTable(config, 0)
   gameTables.value.push(newTable)
-}
-
-const createNewTable = async () => {
-  const config = TABLE_TYPES[newTableType.value]
-  const newTable = createTable(config, 1)
-  
-  try {
-    // 🎯 Создаем стол через API
-    const response = await fetch('/api/seka/games', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        table_type: newTableType.value,
-        max_players: newTablePlayers.value
-      })
-    })
-
-    if (response.ok) {
-      const gameData = await response.json()
-      gameTables.value.push(newTable)
-      
-      // ✅ Успешно создали - переходим в игру
-      window.location.href = `/game/${gameData.id || newTable.id}`
-    } else {
-      const errorData = await response.json()
-      alert(`Ошибка: ${errorData.message || 'Не удалось создать стол'}`)
-    }
-  } catch (error) {
-    console.error('❌ Create table error:', error)
-    alert('Ошибка создания стола')
-  }
 }
 
 const logout = () => {
@@ -250,9 +334,22 @@ const simulatePlayerActivity = () => {
   }, 8000)
 }
 
+const getColorByBet = (bet) => {
+  if (bet <= 5) return 'green'
+  if (bet <= 10) return 'blue' 
+  if (bet <= 25) return 'purple'
+  return 'gold'
+}
+
+const getTypeByBet = (bet) => {
+  if (bet <= 5) return 'novice'
+  if (bet <= 10) return 'amateur'
+  if (bet <= 25) return 'pro'
+  return 'master'
+}
+
 onMounted(() => {
-  initializeTables()
-  simulatePlayerActivity()
+  loadRealGames()
 })
 </script>
 
