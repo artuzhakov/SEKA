@@ -41,7 +41,6 @@ export function useGameState(gameId) {
     error.value = null
     
     try {
-      // 🎯 ИСПРАВЛЕНО: используем правильный endpoint
       const response = await fetch(`/api/seka/games/${gameId}/state`)
       
       if (response.status === 404) {
@@ -60,11 +59,19 @@ export function useGameState(gameId) {
       gameState.value = data
       console.log('✅ Game state loaded:', data)
       
+      // 🎯 ДИАГНОСТИКА: что именно пришло?
+      console.log('🔍 Response structure:', {
+        success: data.success,
+        game: data.game,
+        players: data.game?.players,
+        hasPlayers: !!data.game?.players,
+        playersCount: data.game?.players?.length
+      })
+      
     } catch (err) {
       error.value = err.message
       console.error('❌ Failed to load game state:', err)
       
-      // 🎯 Если ошибка 403 или 404 - редирект в лобби
       if (err.message.includes('не участвуете') || err.message.includes('не найдена')) {
         setTimeout(() => {
           window.location.href = '/lobby'
@@ -74,7 +81,7 @@ export function useGameState(gameId) {
       isLoading.value = false
     }
   }
-
+  
   const joinGame = async () => {
     try {
       const response = await fetch(`/api/seka/games/${gameId}/join`, {

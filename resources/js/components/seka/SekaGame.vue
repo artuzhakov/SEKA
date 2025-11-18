@@ -294,16 +294,18 @@ const isMobile = ref(false)
 
 // 🎯 ВЫЧИСЛЯЕМЫЕ СВОЙСТВА ИЗ РЕАЛЬНЫХ ДАННЫХ
 const gameStatus = computed(() => backendGameStatus.value || 'waiting')
-const pot = computed(() => backendGameState.value?.bank || 0)
-const currentRound = computed(() => backendGameState.value?.current_round || 1)
-const currentPlayerId = computed(() => backendGameState.value?.current_player_id)
-const dealerId = computed(() => backendGameState.value?.dealer_id || 1)
-const currentMaxBet = computed(() => backendGameState.value?.current_max_bet || 0)
-const baseBet = computed(() => backendGameState.value?.base_bet || 50)
+const pot = computed(() => backendGameState.value?.game?.bank || 0)
+const currentRound = computed(() => backendGameState.value?.game?.current_round || 1)
+const currentPlayerId = computed(() => backendGameState.value?.game?.current_player_id)
+const dealerId = computed(() => backendGameState.value?.game?.dealer_id || 1)
+const currentMaxBet = computed(() => backendGameState.value?.game?.current_max_bet || 0)
+const baseBet = computed(() => backendGameState.value?.game?.base_bet || 50)
 
 const players = computed(() => {
-  if (!backendGameState.value?.players) return []
-  return backendGameState.value.players.map(player => ({
+  // 🎯 ИСПРАВЛЕНО: берем игроков из game.players
+  if (!backendGameState.value?.game?.players) return []
+  
+  return backendGameState.value.game.players.map(player => ({
     id: player.id,
     name: player.name,
     position: player.position,
@@ -318,8 +320,9 @@ const players = computed(() => {
 
 const playerCards = computed(() => {
   const cards = {}
-  if (backendGameState.value?.players) {
-    backendGameState.value.players.forEach(player => {
+  // 🎯 ИСПРАВЛЕНО: берем из game.players
+  if (backendGameState.value?.game?.players) {
+    backendGameState.value.game.players.forEach(player => {
       if (player.cards) {
         cards[player.id] = player.cards.map(card => ({
           ...card,
@@ -443,11 +446,28 @@ const getAdjustedBet = (baseAmount) => {
 }
 
 // 🎯 LIFECYCLE
-onMounted(() => {
+onMounted(async () => {
   checkDevice()
   window.addEventListener('resize', checkDevice)
   
-  // 🎯 Загружаем состояние игры при монтировании
+  // 🎯 ПРЯМАЯ ПРОВЕРКА API
+  console.log('🎯 Testing API endpoint...')
+  try {
+    const response = await fetch(`/api/seka/games/${props.gameId}/state`)
+    console.log('🎯 API Response status:', response.status)
+    console.log('🎯 API Response ok:', response.ok)
+    
+    if (response.ok) {
+      const data = await response.json()
+      console.log('🎯 API Response data:', data)
+    } else {
+      console.error('🎯 API Error:', response.status, response.statusText)
+    }
+  } catch (error) {
+    console.error('🎯 API Fetch error:', error)
+  }
+  
+  // 🎯 Затем загружаем через composable
   loadGameState()
 })
 
@@ -474,6 +494,20 @@ watch(lastError, (newError) => {
     // Можно показать уведомление пользователю
   }
 })
+
+// В SekaGame.vue, после computed players
+watch(players, (newPlayers) => {
+  console.log('🎯 DEBUG Fixed Players data:', newPlayers)
+  console.log('🎯 DEBUG Game structure:', backendGameState.value?.game)
+}, { immediate: true })
+
+// Временная глубокая диагностика
+watch(backendGameState, (newState) => {
+  console.log('🎯 DEEP DEBUG Full backend state:', JSON.parse(JSON.stringify(newState)))
+  console.log('🎯 DEEP DEBUG Game object:', newState?.game)
+  console.log('🎯 DEEP DEBUG Players in game:', newState?.game?.players)
+}, { immediate: true, deep: true })
+
 </script>
 
 <style scoped>
