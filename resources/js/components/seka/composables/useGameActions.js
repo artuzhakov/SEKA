@@ -1,5 +1,10 @@
 import { ref } from 'vue'
 
+// 🎯 ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ CSRF
+const getCsrfToken = () => {
+  return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')
+}
+
 export function useGameActions(gameId) {
   const isActionLoading = ref(false)
   const lastError = ref(null)
@@ -9,6 +14,11 @@ export function useGameActions(gameId) {
     lastError.value = null
 
     try {
+      const csrfToken = getCsrfToken()
+      if (!csrfToken) {
+        throw new Error('CSRF token not found')
+      }
+
       const payload = { action }
       if (betAmount !== null) {
         payload.bet_amount = betAmount
@@ -18,6 +28,7 @@ export function useGameActions(gameId) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken  // 🎯 ДОБАВЛЯЕМ CSRF ТОКЕН
         },
         body: JSON.stringify(payload)
       })

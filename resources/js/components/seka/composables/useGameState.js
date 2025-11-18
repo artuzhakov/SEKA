@@ -41,7 +41,8 @@ export function useGameState(gameId) {
     error.value = null
     
     try {
-      const response = await fetch(`/api/seka/games/${gameId}`)
+      // 🎯 ИСПРАВЛЕНО: используем правильный endpoint
+      const response = await fetch(`/api/seka/games/${gameId}/state`)
       
       if (response.status === 404) {
         throw new Error('Игра не найдена')

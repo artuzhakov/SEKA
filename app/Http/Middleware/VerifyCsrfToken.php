@@ -16,5 +16,8 @@ class VerifyCsrfToken extends Middleware
         'public/*',
         'profile/updateOnlineStatus',
         'games/updateUserTimers',
+        'api/*',
+        'api/seka/*',
+        'seka/*',
     ];
 }

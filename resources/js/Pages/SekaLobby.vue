@@ -177,7 +177,29 @@ const getTablesByType = (type) => {
   return gameTables.value.filter(table => table.table_type === type)
 }
 
-// 🎯 ТВОЙ МЕТОД ПРИСОЕДИНЕНИЯ (без изменений)
+// 🎯 ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ДЛЯ ИНТЕРФЕЙСА
+const isUserAtTable = (table) => {
+  // Здесь можно добавить логику проверки пользователя
+  // Например: проверить есть ли текущий пользователь в списке игроков стола
+  return false
+}
+
+const getJoinButtonText = (table) => {
+  if (isUserAtTable(table)) return 'ВОЙТИ'
+  if (table.players_count >= 6) return 'ПОЛНЫЙ'
+  if (table.players_count >= 5) return 'ПОЧТИ ПОЛНЫЙ'
+  return 'ПРИСОЕДИНИТЬСЯ'
+}
+
+// 🎯 УЛУЧШЕННАЯ ФУНКЦИЯ ДЛЯ CSRF
+const getCsrfToken = () => {
+  // Пробуем разные способы найти CSRF токен
+  const token = document.querySelector('meta[name="csrf-token"]')?.content || 
+                document.querySelector('input[name="_token"]')?.value
+  return token
+}
+
+// 🎯 ИСПРАВЛЕННЫЙ МЕТОД ПРИСОЕДИНЕНИЯ
 const handleJoinTable = async (table) => {
   const tableId = table.id
   
@@ -186,13 +208,23 @@ const handleJoinTable = async (table) => {
   try {
     console.log('🎯 Joining table:', tableId)
     
-    const response = await fetch(`/api/public/seka/games/${tableId}/join`, {
+    const csrfToken = getCsrfToken()
+    console.log('🔐 CSRF Token:', csrfToken ? 'Found' : 'Not found')
+    
+    const headers = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'X-Requested-With': 'XMLHttpRequest'
+    }
+    
+    // Добавляем CSRF токен если нашли
+    if (csrfToken) {
+      headers['X-CSRF-TOKEN'] = csrfToken
+    }
+    
+    const response = await fetch(`/api/seka/games/${tableId}/join`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'X-Requested-With': 'XMLHttpRequest'
-      },
+      headers: headers,
       body: JSON.stringify({
         user_id: props.user?.id || 1,
         player_name: props.user?.name || 'Player'
@@ -205,7 +237,7 @@ const handleJoinTable = async (table) => {
       const data = await response.json()
       console.log('✅ Join successful:', data)
       
-      await loadRealGames()
+      // Редирект на игровую комнату
       window.location.href = `/game/${tableId}`
     } else {
       const errorText = await response.text()
@@ -232,18 +264,27 @@ const handleJoinTable = async (table) => {
   }
 }
 
-// 🎯 ТВОЙ МЕТОД СОЗДАНИЯ СТОЛА (без изменений)
+// 🎯 ИСПРАВЛЕННЫЙ МЕТОД СОЗДАНИЯ СТОЛА
 const createNewTable = async () => {
   try {
     console.log('🎯 Creating new table...')
     
-    const response = await fetch('/api/public/seka/games', {
+    const csrfToken = getCsrfToken()
+    console.log('🔐 CSRF Token:', csrfToken ? 'Found' : 'Not found')
+    
+    const headers = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json', 
+      'X-Requested-With': 'XMLHttpRequest'
+    }
+    
+    if (csrfToken) {
+      headers['X-CSRF-TOKEN'] = csrfToken
+    }
+    
+    const response = await fetch('/api/seka/games', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'X-Requested-With': 'XMLHttpRequest'
-      },
+      headers: headers,
       body: JSON.stringify({
         user_id: props.user?.id || 1,
         table_type: newTableType.value,
@@ -256,8 +297,6 @@ const createNewTable = async () => {
     if (response.ok) {
       const gameData = await response.json()
       console.log('✅ Create successful:', gameData)
-      
-      await loadRealGames()
       
       const gameId = gameData.game?.id || gameData.id
       if (gameId) {
@@ -282,11 +321,11 @@ const createNewTable = async () => {
   }
 }
 
-// 🎯 ТВОЙ МЕТОД ЗАГРУЗКИ ИГР (без изменений)
+// 🎯 ИСПРАВЛЕННЫЙ МЕТОД ЗАГРУЗКИ ИГР
 const loadRealGames = async () => {
   try {
     console.log('🎯 Loading real games from API...')
-    const response = await fetch('/api/public/seka/lobby', {
+    const response = await fetch('/api/seka/lobby', {
       headers: {
         'Accept': 'application/json'
       }
@@ -309,7 +348,7 @@ const loadRealGames = async () => {
   }
 }
 
-// 🎯 Fallback на мок данные (твоя логика)
+// 🎯 Fallback на мок данные
 const initializeMockTables = () => {
   gameTables.value = [
     { id: 1, name: 'Стол #1', table_type: 'novice', players_count: 2, base_bet: 5 },
@@ -323,19 +362,6 @@ const initializeMockTables = () => {
   ]
 }
 
-// 🎯 Вспомогательные методы для интерфейса
-const isUserAtTable = (table) => {
-  // Здесь можно добавить логику проверки пользователя
-  return false
-}
-
-const getJoinButtonText = (table) => {
-  if (isUserAtTable(table)) return 'ВОЙТИ'
-  if (table.players_count >= 6) return 'ПОЛНЫЙ'
-  if (table.players_count >= 5) return 'ПОЧТИ ПОЛНЫЙ'
-  return 'ПРИСОЕДИНИТЬСЯ'
-}
-
 const logout = () => {
   router.post('/logout')
 }
@@ -346,6 +372,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
+/* Стили остаются без изменений */
 .lobby-container {
   min-height: 100vh;
   background: linear-gradient(135deg, #0a2f0a 0%, #1a5a1a 100%);
