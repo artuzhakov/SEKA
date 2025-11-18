@@ -86,17 +86,21 @@ class CachedGameRepository
     {
         $games = [];
         
-        // 🎯 Проходим по возможным ID игр (1-100)
         for ($i = 1; $i <= 100; $i++) {
             $cacheKey = self::CACHE_KEY_PREFIX . $i;
             $game = Cache::get($cacheKey);
             
             if ($game) {
                 $games[] = $game;
+                \Log::info("✅ Found game in cache", [
+                    'game_id' => $i,
+                    'players_count' => count($game->getPlayers()),
+                    'status' => $game->getStatus()->value
+                ]);
             }
         }
         
-        \Log::info("Found " . count($games) . " games in cache");
+        \Log::info("🎯 TOTAL GAMES IN CACHE: " . count($games));
         
         return $games;
     }

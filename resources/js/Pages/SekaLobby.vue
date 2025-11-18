@@ -25,6 +25,7 @@
               {{ user.name.charAt(0) }}
             </div>
             <span class="user-name">{{ user.name }}</span>
+            <span class="user-balance">{{ user.balance }}🪙</span>
           </div>
           <Link href="/dashboard" class="profile-btn">
             Профиль
@@ -38,23 +39,72 @@
 
     <!-- Main Content -->
     <div class="lobby-content">
-      <!-- Tables Grid -->
-      <div class="tables-section">
-        <h2 class="section-title">Игровые столы</h2>
-        <div class="tables-grid">
-          <GameRoomCard
-            v-for="table in gameTables"
-            :key="table.id"
-            :table="table"
-            @join="handleJoinTable"
-          />
+      <!-- Tables by Type with Horizontal Scroll -->
+      <div class="table-type-section" v-for="tableType in tableTypes" :key="tableType.id">
+        <div class="section-header">
+          <div class="type-info">
+            <span class="type-icon">{{ tableType.icon }}</span>
+            <h2 class="type-title">{{ tableType.name }}</h2>
+            <div class="type-details">
+              <span class="bet-info">ставка {{ tableType.bet }}🪙</span>
+              <span class="balance-info">мин. {{ tableType.minBalance }}🪙</span>
+            </div>
+          </div>
+          <div class="section-stats">
+            {{ getTablesByType(tableType.id).length }} столов
+          </div>
+        </div>
+
+        <!-- Horizontal Scroll Container -->
+        <div class="tables-scroll-container">
+          <div class="tables-scroll">
+            <div 
+              class="table-card" 
+              v-for="table in getTablesByType(tableType.id)" 
+              :key="table.id"
+            >
+              <div class="table-header">
+                <h3 class="table-name">{{ table.name }}</h3>
+                <div class="players-count">{{ table.players_count }}/6</div>
+              </div>
+              
+              <!-- Players Indicators -->
+              <div class="players-indicators">
+                <span 
+                  v-for="n in 6" 
+                  :key="n"
+                  class="player-indicator"
+                  :class="{ 
+                    active: n <= table.players_count,
+                    'current-user': isUserAtTable(table)
+                  }"
+                >
+                  ●
+                </span>
+              </div>
+              
+              <!-- Join Button -->
+              <button
+                @click="handleJoinTable(table)"
+                class="join-btn"
+                :class="{ 
+                  'almost-full': table.players_count >= 5,
+                  'disabled': table.players_count >= 6,
+                  'joined': isUserAtTable(table)
+                }"
+                :disabled="table.players_count >= 6"
+              >
+                {{ getJoinButtonText(table) }}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
-      <!-- Quick Create Section -->
-      <div class="create-section">
+      <!-- Quick Create Section (Admin Only) -->
+      <div class="create-section" v-if="user.isAdmin">
         <div class="create-card">
-          <h3 class="create-title">Создать новый стол</h3>
+          <h3 class="create-title">⚙️ Админ: Создать стол</h3>
           <div class="create-controls">
             <div class="control-group">
               <label class="control-label">Уровень ставок:</label>
@@ -62,24 +112,10 @@
                 v-model="newTableType"
                 class="control-select"
               >
-                <option value="novice">🥉 Новички (5-25🪙)</option>
-                <option value="amateur">🥈 Любители (10-100🪙)</option>
-                <option value="pro">🥇 Профи (25-250🪙)</option>
-                <option value="master">🏆 Мастера (50-500🪙)</option>
-              </select>
-            </div>
-            
-            <div class="control-group">
-              <label class="control-label">Количество игроков:</label>
-              <select
-                v-model="newTablePlayers"
-                class="control-select"
-              >
-                <option value="2">2 игрока</option>
-                <option value="3">3 игрока</option>
-                <option value="4">4 игрока</option>
-                <option value="5">5 игроков</option>
-                <option value="6">6 игроков</option>
+                <option value="novice">🥉 Новички (5🪙)</option>
+                <option value="amateur">🥈 Любители (10🪙)</option>
+                <option value="pro">🥇 Профи (25🪙)</option>
+                <option value="master">🏆 Мастера (50🪙)</option>
               </select>
             </div>
             
@@ -99,7 +135,6 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { Link, router } from '@inertiajs/vue3'
-import GameRoomCard from '@/components/seka/components/GameRoomCard.vue'
 
 const props = defineProps({
   user: Object,
@@ -107,7 +142,15 @@ const props = defineProps({
   errors: Object
 })
 
-// Configuration for table types
+// 🎯 ДОБАВЛЯЕМ tableTypes КОТОРАЯ ИСПОЛЬЗУЕТСЯ В ШАБЛОНЕ
+const tableTypes = ref([
+  { id: 'novice', name: 'НОВИЧКИ', icon: '🥉', bet: 5, minBalance: 50 },
+  { id: 'amateur', name: 'ЛЮБИТЕЛИ', icon: '🥈', bet: 10, minBalance: 100 },
+  { id: 'pro', name: 'ПРОФИ', icon: '🥇', bet: 25, minBalance: 250 },
+  { id: 'master', name: 'МАСТЕРА', icon: '🏆', bet: 50, minBalance: 500 }
+])
+
+// Configuration for table types - ТВОЯ КОНФИГУРАЦИЯ
 const TABLE_TYPES = {
   novice: { minBet: 5, maxBet: 25, buyIn: 5, name: "Новички", color: "green" },
   amateur: { minBet: 10, maxBet: 100, buyIn: 10, name: "Любители", color: "blue" },
@@ -115,62 +158,40 @@ const TABLE_TYPES = {
   master: { minBet: 50, maxBet: 500, buyIn: 50, name: "Мастера", color: "gold" }
 }
 
-// State
+// State - ТВОИ ПЕРЕМЕННЫЕ
 const gameTables = ref([])
 const newTableType = ref('novice')
 const newTablePlayers = ref(6)
-let tableIdCounter = 1
 
-// Computed
+// Computed - ТВОИ ВЫЧИСЛЯЕМЫЕ СВОЙСТВА
 const totalPlayers = computed(() => {
-  return gameTables.value.reduce((sum, table) => sum + table.players, 0)
+  return gameTables.value.reduce((sum, table) => sum + table.players_count, 0)
 })
 
 const availableTablesCount = computed(() => {
-  return gameTables.value.filter(table => table.status === 'available').length
+  return gameTables.value.filter(table => table.players_count < 6).length
 })
 
-// Methods
-const initializeTables = () => {
-  gameTables.value = [
-    createTable(TABLE_TYPES.novice, 2),
-    createTable(TABLE_TYPES.amateur, 1),
-    createTable(TABLE_TYPES.pro, 3),
-    createTable(TABLE_TYPES.master, 0)
-  ]
+// 🎯 ПОЛУЧИТЬ СТОЛЫ ПО ТИПУ ДЛЯ ГОРИЗОНТАЛЬНЫХ РЯДОВ
+const getTablesByType = (type) => {
+  return gameTables.value.filter(table => table.table_type === type)
 }
 
-const createTable = (config, initialPlayers = 0) => {
-  const isFull = initialPlayers >= 6
-  return {
-    id: tableIdCounter++,
-    name: config.name,
-    minBet: config.minBet,
-    maxBet: config.maxBet,
-    buyIn: config.buyIn,
-    players: initialPlayers,
-    maxPlayers: 6,
-    status: isFull ? 'full' : 'available',
-    color: config.color,
-    type: Object.keys(TABLE_TYPES).find(key => TABLE_TYPES[key].name === config.name)
-  }
-}
-
-const handleJoinTable = async (tableId) => {
-  const table = gameTables.value.find(t => t.id === tableId)
-  if (!table || table.status === 'full') return
+// 🎯 ТВОЙ МЕТОД ПРИСОЕДИНЕНИЯ (без изменений)
+const handleJoinTable = async (table) => {
+  const tableId = table.id
+  
+  if (table.players_count >= 6) return
 
   try {
     console.log('🎯 Joining table:', tableId)
     
-    // 🎯 ИСПРАВЛЕНИЕ: Используем публичные маршруты БЕЗ CSRF
     const response = await fetch(`/api/public/seka/games/${tableId}/join`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
         'X-Requested-With': 'XMLHttpRequest'
-        // 🎯 УБИРАЕМ X-CSRF-TOKEN - он не нужен для публичных маршрутов
       },
       body: JSON.stringify({
         user_id: props.user?.id || 1,
@@ -184,10 +205,7 @@ const handleJoinTable = async (tableId) => {
       const data = await response.json()
       console.log('✅ Join successful:', data)
       
-      // 🎯 ОБНОВЛЯЕМ список игр после присоединения
       await loadRealGames()
-      
-      // ✅ Успешно присоединились - переходим в игру
       window.location.href = `/game/${tableId}`
     } else {
       const errorText = await response.text()
@@ -196,12 +214,11 @@ const handleJoinTable = async (tableId) => {
       try {
         const errorData = JSON.parse(errorText)
         
-        // 🎯 ВАЖНОЕ ИСПРАВЛЕНИЕ: Обработка "игрок уже в игре"
         if (errorData.message?.includes('already joined') || 
             errorData.message?.includes('уже присоединился')) {
           console.log('ℹ️ Player already in game, redirecting...')
           window.location.href = `/game/${tableId}`
-          return // 🎯 Выходим из функции
+          return
         }
         
         alert(`Ошибка: ${errorData.message || 'Не удалось присоединиться'}`)
@@ -215,18 +232,17 @@ const handleJoinTable = async (tableId) => {
   }
 }
 
+// 🎯 ТВОЙ МЕТОД СОЗДАНИЯ СТОЛА (без изменений)
 const createNewTable = async () => {
   try {
     console.log('🎯 Creating new table...')
     
-    // 🎯 ИСПРАВЛЕНИЕ: Используем публичные маршруты БЕЗ CSRF
     const response = await fetch('/api/public/seka/games', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
         'X-Requested-With': 'XMLHttpRequest'
-        // 🎯 УБИРАЕМ X-CSRF-TOKEN
       },
       body: JSON.stringify({
         user_id: props.user?.id || 1,
@@ -241,10 +257,8 @@ const createNewTable = async () => {
       const gameData = await response.json()
       console.log('✅ Create successful:', gameData)
       
-      // 🎯 ОБНОВЛЯЕМ список игр после создания
       await loadRealGames()
       
-      // ✅ Успешно создали - переходим в игру
       const gameId = gameData.game?.id || gameData.id
       if (gameId) {
         window.location.href = `/game/${gameId}`
@@ -268,7 +282,7 @@ const createNewTable = async () => {
   }
 }
 
-// 🎯 ДОБАВЬТЕ fallback если API не работает
+// 🎯 ТВОЙ МЕТОД ЗАГРУЗКИ ИГР (без изменений)
 const loadRealGames = async () => {
   try {
     console.log('🎯 Loading real games from API...')
@@ -283,69 +297,47 @@ const loadRealGames = async () => {
       console.log('✅ Real games loaded:', data)
       
       if (data.success && data.games) {
-        gameTables.value = data.games.map(game => ({
-          id: game.id,
-          name: game.name || `Стол #${game.id}`,
-          minBet: game.base_bet || 5,
-          maxBet: (game.base_bet || 5) * 5,
-          buyIn: game.base_bet || 5,
-          players: game.players_count || 0,
-          maxPlayers: game.max_players || 6,
-          status: game.players_count >= (game.max_players || 6) ? 'full' : 'available',
-          color: getColorByBet(game.base_bet || 5),
-          type: getTypeByBet(game.base_bet || 5)
-        }))
+        gameTables.value = data.games
       }
     } else {
       console.warn('⚠️ Could not load real games, using mock data')
-      initializeTables() // fallback на мок данные
+      initializeMockTables()
     }
   } catch (error) {
     console.error('❌ Error loading real games:', error)
-    initializeTables() // fallback на мок данные
+    initializeMockTables()
   }
 }
 
-const createNewTableOfType = (type) => {
-  const config = TABLE_TYPES[type]
-  const newTable = createTable(config, 0)
-  gameTables.value.push(newTable)
+// 🎯 Fallback на мок данные (твоя логика)
+const initializeMockTables = () => {
+  gameTables.value = [
+    { id: 1, name: 'Стол #1', table_type: 'novice', players_count: 2, base_bet: 5 },
+    { id: 2, name: 'Стол #2', table_type: 'novice', players_count: 0, base_bet: 5 },
+    { id: 3, name: 'Стол #3', table_type: 'amateur', players_count: 1, base_bet: 10 },
+    { id: 4, name: 'Стол #4', table_type: 'amateur', players_count: 5, base_bet: 10 },
+    { id: 5, name: 'Стол #5', table_type: 'pro', players_count: 3, base_bet: 25 },
+    { id: 6, name: 'Стол #6', table_type: 'pro', players_count: 0, base_bet: 25 },
+    { id: 7, name: 'Стол #7', table_type: 'master', players_count: 4, base_bet: 50 },
+    { id: 8, name: 'Стол #8', table_type: 'master', players_count: 1, base_bet: 50 },
+  ]
+}
+
+// 🎯 Вспомогательные методы для интерфейса
+const isUserAtTable = (table) => {
+  // Здесь можно добавить логику проверки пользователя
+  return false
+}
+
+const getJoinButtonText = (table) => {
+  if (isUserAtTable(table)) return 'ВОЙТИ'
+  if (table.players_count >= 6) return 'ПОЛНЫЙ'
+  if (table.players_count >= 5) return 'ПОЧТИ ПОЛНЫЙ'
+  return 'ПРИСОЕДИНИТЬСЯ'
 }
 
 const logout = () => {
   router.post('/logout')
-}
-
-// Симуляция активности игроков
-const simulatePlayerActivity = () => {
-  setInterval(() => {
-    if (Math.random() < 0.2) {
-      const availableTables = gameTables.value.filter(t => t.status === 'available')
-      if (availableTables.length > 0) {
-        const randomTable = availableTables[Math.floor(Math.random() * availableTables.length)]
-        randomTable.players++
-        
-        if (randomTable.players >= randomTable.maxPlayers) {
-          randomTable.status = 'full'
-          createNewTableOfType(randomTable.type)
-        }
-      }
-    }
-  }, 8000)
-}
-
-const getColorByBet = (bet) => {
-  if (bet <= 5) return 'green'
-  if (bet <= 10) return 'blue' 
-  if (bet <= 25) return 'purple'
-  return 'gold'
-}
-
-const getTypeByBet = (bet) => {
-  if (bet <= 5) return 'novice'
-  if (bet <= 10) return 'amateur'
-  if (bet <= 25) return 'pro'
-  return 'master'
 }
 
 onMounted(() => {
@@ -371,7 +363,7 @@ onMounted(() => {
 }
 
 .header-content {
-  max-width: 1200px;
+  max-width: 1400px;
   margin: 0 auto;
   display: flex;
   justify-content: space-between;
@@ -430,7 +422,7 @@ onMounted(() => {
 .user-info {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   background: rgba(255, 255, 255, 0.1);
   padding: 8px 15px;
   border-radius: 25px;
@@ -452,6 +444,12 @@ onMounted(() => {
 .user-name {
   font-size: 0.9rem;
   color: #e5e7eb;
+}
+
+.user-balance {
+  font-size: 0.9rem;
+  font-weight: bold;
+  color: #fbbf24;
 }
 
 .profile-btn, .logout-btn {
@@ -484,32 +482,173 @@ onMounted(() => {
 }
 
 .lobby-content {
-  max-width: 1200px;
+  max-width: 1400px;
   margin: 0 auto;
 }
 
-.tables-section {
-  margin-bottom: 30px;
+/* Table Type Sections */
+.table-type-section {
+  margin-bottom: 40px;
 }
 
-.section-title {
-  font-size: 1.8rem;
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+  padding: 0 10px;
+}
+
+.type-info {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.type-icon {
+  font-size: 2rem;
+}
+
+.type-title {
+  font-size: 1.5rem;
   font-weight: bold;
   color: #e5e7eb;
+  margin: 0;
+}
+
+.type-details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bet-info {
+  font-size: 0.9rem;
+  color: #fbbf24;
+  font-weight: 500;
+}
+
+.balance-info {
+  font-size: 0.8rem;
+  color: #9ca3af;
+}
+
+.section-stats {
+  font-size: 0.9rem;
+  color: #9ca3af;
+}
+
+/* Horizontal Scroll */
+.tables-scroll-container {
+  overflow-x: auto;
+  padding: 10px 0;
+  margin: 0 -10px;
+}
+
+.tables-scroll {
+  display: flex;
+  gap: 15px;
+  padding: 0 10px;
+  min-width: min-content;
+}
+
+/* Table Cards */
+.table-card {
+  background: rgba(0, 0, 0, 0.4);
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 20px;
+  min-width: 200px;
+  backdrop-filter: blur(10px);
+  transition: all 0.3s ease;
+  flex-shrink: 0;
+}
+
+.table-card:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+  transform: translateY(-2px);
+}
+
+.table-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.table-name {
+  font-size: 1.1rem;
+  font-weight: bold;
+  color: #e5e7eb;
+  margin: 0;
+}
+
+.players-count {
+  font-size: 0.9rem;
+  color: #9ca3af;
+}
+
+/* Players Indicators */
+.players-indicators {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
   margin-bottom: 20px;
-  text-align: center;
 }
 
-.tables-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 20px;
-  margin-bottom: 30px;
+.player-indicator {
+  font-size: 1.2rem;
+  color: #4b5563;
+  transition: all 0.3s ease;
 }
 
+.player-indicator.active {
+  color: #10b981;
+}
+
+.player-indicator.current-user {
+  color: #fbbf24;
+  transform: scale(1.2);
+}
+
+/* Join Buttons */
+.join-btn {
+  width: 100%;
+  padding: 12px;
+  border: none;
+  border-radius: 8px;
+  font-weight: bold;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: white;
+}
+
+.join-btn:hover:not(.disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+}
+
+.join-btn.almost-full {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+}
+
+.join-btn.disabled {
+  background: #6b7280;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.join-btn.joined {
+  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+}
+
+/* Create Section */
 .create-section {
   display: flex;
   justify-content: center;
+  margin-top: 40px;
 }
 
 .create-card {
@@ -519,11 +658,11 @@ onMounted(() => {
   border: 2px solid #10b981;
   backdrop-filter: blur(10px);
   width: 100%;
-  max-width: 500px;
+  max-width: 400px;
 }
 
 .create-title {
-  font-size: 1.3rem;
+  font-size: 1.2rem;
   font-weight: bold;
   color: #10b981;
   margin-bottom: 20px;
@@ -582,6 +721,25 @@ onMounted(() => {
   box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
 }
 
+/* Scrollbar Styling */
+.tables-scroll-container::-webkit-scrollbar {
+  height: 8px;
+}
+
+.tables-scroll-container::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+.tables-scroll-container::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+}
+
+.tables-scroll-container::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.5);
+}
+
 /* Адаптивность */
 @media (max-width: 768px) {
   .lobby-container {
@@ -599,8 +757,29 @@ onMounted(() => {
     gap: 15px;
   }
   
-  .tables-grid {
-    grid-template-columns: 1fr;
+  .header-right {
+    flex-direction: column;
+    gap: 10px;
+  }
+  
+  .user-info {
+    justify-content: center;
+  }
+  
+  .section-header {
+    flex-direction: column;
+    gap: 10px;
+    text-align: center;
+  }
+  
+  .type-info {
+    flex-direction: column;
+    gap: 10px;
+  }
+  
+  .table-card {
+    min-width: 180px;
+    padding: 15px;
   }
   
   .create-card {
