@@ -5,6 +5,7 @@ namespace Tests\Unit\Application\Services;
 use Tests\TestCase;
 use App\Application\Services\ReadinessService;
 use App\Application\Services\BiddingService;
+use App\Application\Services\ScoringService;
 use App\Domain\Game\Entities\Game;
 use App\Domain\Game\ValueObjects\GameId;
 use App\Domain\Game\Enums\GameStatus;
@@ -23,7 +24,9 @@ class ReadinessServiceTest extends TestCase
     {
         parent::setUp();
         
-        $this->biddingService = new BiddingService();
+        $scoringService = new ScoringService();
+        $this->biddingService = new BiddingService($scoringService);
+        
         $this->readinessService = new ReadinessService($this->biddingService);
     }
     

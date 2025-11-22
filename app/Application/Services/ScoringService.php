@@ -12,6 +12,10 @@ class ScoringService
         $cardCount = count($cards);
         
         if ($cardCount === 3) {
+            // ✅ Специальный кейс: Джокер + Туз + карта той же масти (32)
+            if ($this->isJokerAceSameSuitCombo($cards)) {
+                return 32;
+            }
             return $this->calculateThreeCardHand($cards);
         } elseif ($cardCount === 2) {
             return $this->calculateTwoCardHand($cards);
@@ -321,5 +325,53 @@ class ScoringService
         
         return $this->getBaseCombination($suits, false, $ranks);
     }
+
+    /**
+     * Джокер + Туз + карта той же масти, что и туз.
+     */
+    private function isJokerAceSameSuitCombo(array $cards): bool
+    {
+        // формат карт в тестах: '6♣', 'Т♥', '10♥'
+        // То есть:
+        // - джокер: '6♣'
+        // - туз:   'Т♦/Т♥/...'
+        // - третья карта той же масти, что и туз
+
+        if (!in_array('6♣', $cards, true)) {
+            return false;
+        }
+
+        // убираем джокера, работаем с оставшимися двумя
+        $others = array_values(array_filter($cards, fn ($c) => $c !== '6♣'));
+
+        if (count($others) !== 2) {
+            return false;
+        }
+
+        [$c1, $c2] = $others;
+
+        // Разбираем строки, предполагая формат: [ранг][масть]
+        // Например: 'Т♥', '10♥', 'K♦'.
+        $rank1 = mb_substr($c1, 0, -1, 'UTF-8');
+        $suit1 = mb_substr($c1, -1, null, 'UTF-8');
+
+        $rank2 = mb_substr($c2, 0, -1, 'UTF-8');
+        $suit2 = mb_substr($c2, -1, null, 'UTF-8');
+
+        // Один из них должен быть Туз ('Т'), другой — любая карта, но той же масти
+        $isFirstAce  = ($rank1 === 'Т');
+        $isSecondAce = ($rank2 === 'Т');
+
+        if ($isFirstAce && !$isSecondAce && $suit1 === $suit2) {
+            return true;
+        }
+
+        if ($isSecondAce && !$isFirstAce && $suit1 === $suit2) {
+            return true;
+        }
+
+        return false;
+    }
+
 
 }

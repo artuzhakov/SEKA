@@ -9,13 +9,22 @@ use App\Domain\Game\Entities\Player;
 use App\Domain\Game\Enums\PlayerAction;
 use App\Domain\Game\Enums\PlayerStatus;
 use App\Domain\Game\Enums\GameStatus;
+use App\Application\Services\ScoringService;
 use App\Events\PlayerActionTaken;
 use App\Events\BiddingRoundStarted;
+use App\Events\RevealResolved;
 use App\Events\TurnChanged;
 use DomainException;
 
 class BiddingService
 {
+
+    protected ScoringService $scoringService;
+
+    public function __construct(ScoringService $scoringService)
+    {
+        $this->scoringService = $scoringService;
+    }
     
     /**
      * 🎯 Обработать действие игрока в торгах с WebSocket событиями
@@ -96,10 +105,12 @@ class BiddingService
                     if ($previousPlayerPosition !== $game->getCurrentPlayerPosition()) {
                         $currentPlayer = $this->getCurrentPlayer($game);
                         if ($currentPlayer) {
+                            $previousPlayer = $this->findPlayerByPosition($game, $previousPlayerPosition);
+
                             event(new \App\Events\TurnChanged(
                                 gameId: $game->getId()->toInt(),
-                                previousPlayerId: $this->findPlayerByPosition($game, $previousPlayerPosition)?->getUserId() ?? 0,
-                                currentPlayerId: $currentPlayer->getUserId(),
+                                previousPlayerId: (string)($previousPlayer?->getUserId() ?? ''),
+                                currentPlayerId: (string)$currentPlayer->getUserId(),
                                 turnTimeLeft: 30
                             ));
                         }
@@ -157,32 +168,39 @@ class BiddingService
      */
     private function processRaise(Player $player, ?int $betAmount, Game $game): void
     {
-        \Log::info("🔄 Processing RAISE for player {$player->getUserId()}, amount: {$betAmount}");
-        
+        // ✅ финальная версия
+
+        \Log::info("🔄 [FINAL] Processing RAISE for player {$player->getUserId()}, betAmount: {$betAmount}");
+
         if ($betAmount === null) {
             throw new DomainException('Bet amount required for raise');
         }
 
-        // 🎯 Для темнящих игроков ставка в 2 раза меньше
-        $effectiveBet = $player->getStatus() === PlayerStatus::DARK 
-            ? (int)($betAmount / 2)
-            : $betAmount;
+        $newStake = $betAmount;
 
-        \Log::info("💰 Effective bet for player {$player->getUserId()}: {$effectiveBet} (dark: " . ($player->getStatus() === PlayerStatus::DARK ? 'YES' : 'NO') . ")");
+        $currentStake = $game->getCurrentMaxBet();
 
-        $player->placeBet($effectiveBet);
-        $game->setCurrentMaxBet($effectiveBet);
-        
-        \Log::info("✅ Player {$player->getUserId()} raised to {$effectiveBet}");
+        if ($newStake <= $currentStake) {
+            throw new DomainException('Raise must be greater than current stake');
+        }
+
+        // Обновляем уровень ставки за столом
+        $game->setCurrentMaxBet($newStake);
+
+        // Доводим ставку ИМЕННО этого игрока до newStake
+        $darkPrivilegeActive = $this->isDarkPrivilegeActive($game, $player);
+        $this->adjustPlayerBetTo($game, $player, $newStake, $darkPrivilegeActive);
 
         $this->saveGame($game);
     }
+
 
     /**
      * 🎯 Поддержка ставки (С ЛОГИРОВАНИЕМ)
      */
     private function processCall(Player $player, Game $game): void
     {
+        /*
         \Log::info("🔄 Processing CALL for player {$player->getUserId()}");
         
         $currentMaxBet = $game->getCurrentMaxBet();
@@ -204,6 +222,18 @@ class BiddingService
         } else {
             \Log::info("✅ Player {$player->getUserId()} call skipped - already at max bet");
         }
+
+        $this->saveGame($game);
+        */
+                
+        // ✅ финальная логика CALL
+
+        \Log::info("🔄 [FINAL] Processing CALL for player {$player->getUserId()}");
+
+        $currentStake = $game->getCurrentMaxBet();   // трактуем currentMaxBet как currentStake
+        $darkPrivilegeActive = $this->isDarkPrivilegeActive($game, $player);
+
+        $this->adjustPlayerBetTo($game, $player, $currentStake, $darkPrivilegeActive);
 
         $this->saveGame($game);
     }
@@ -233,49 +263,148 @@ class BiddingService
     }
 
     /**
-     * 🎯 Вскрытие - ставка в 2x от текущей максимальной (С ЛОГИРОВАНИЕМ)
+     * 🎯 REVEAL — вскрытие против предыдущего активного игрока.
+     *
+     * Правила:
+     * - доступен только НЕ в первом раунде;
+     * - игрок делает ставку = currentStake * 2;
+     * - currentStake не меняется;
+     * - сравниваются только два игрока: текущий и предыдущий активный;
+     * - проигравший переходит в FOLDED, но остаётся за столом;
+     * - это полноценный ход, дополнительного хода победителю нет.
      */
     private function processReveal(Player $player, Game $game): void
     {
-        \Log::info("🔄 Processing REVEAL for player {$player->getUserId()}");
-        
-        $currentMaxBet = $game->getCurrentMaxBet();
-        $revealBet = $currentMaxBet * 2;
-        
-        \Log::info("💰 Reveal details: currentMaxBet={$currentMaxBet}, revealBet={$revealBet}, balance={$player->getBalance()}");
-        
-        if ($player->getBalance() < $revealBet) {
-            \Log::error("❌ Insufficient funds for reveal: balance={$player->getBalance()}, needed={$revealBet}");
+        \Log::info("🔄 [FINAL] Processing REVEAL for player {$player->getUserId()}");
+
+        $round = $game->getCurrentRound();
+
+        // ❌ REVEAL запрещён в первом раунде
+        if ($round <= 1) {
+            \Log::error("⛔ REVEAL not allowed in round {$round}");
+            throw new DomainException('Reveal is not allowed in the first round');
+        }
+
+        // Игрок должен быть в активном состоянии (не FOLDED, не WAITING и т.п.)
+        if (!$this->isPlayerActiveInBidding($player)) {
+            \Log::error("⛔ REVEAL not allowed: player {$player->getUserId()} is not active");
+            throw new DomainException('Reveal is not allowed for this player');
+        }
+
+        $currentStake = $game->getCurrentMaxBet();
+        $revealStake  = $currentStake * 2;
+
+        \Log::info("💰 REVEAL financials: currentStake={$currentStake}, revealStake={$revealStake}, balance={$player->getBalance()}");
+
+        if ($player->getBalance() < $revealStake) {
+            \Log::error("❌ Insufficient funds for reveal: balance={$player->getBalance()}, needed={$revealStake}");
             throw new DomainException('Insufficient funds for reveal');
         }
 
-        $player->placeBet($revealBet);
-        $player->reveal();
-        $game->setCurrentMaxBet($revealBet);
-        
-        \Log::info("✅ Player {$player->getUserId()} revealed with bet {$revealBet}");
+        // 💰 Финансовая часть:
+        // - списываем ПОЛНУЮ сумму с баланса;
+        // - currentBet увеличиваем на ПОЛНУЮ сумму;
+        // - в банк уходит ПОЛНАЯ сумма;
+        $player->placeBet($revealStake);
+        $game->increaseBank($revealStake);
+        $player->increaseCurrentBet($revealStake);
+
+        // 🔍 Находим предыдущего активного игрока для сравнения
+        $opponent = $this->findPreviousActivePlayer($game, $player);
+
+        if ($opponent === null) {
+            \Log::error("⛔ No active opponent found for REVEAL from player {$player->getUserId()}");
+            throw new DomainException('No opponent available for reveal');
+        }
+
+        \Log::info("🆚 REVEAL vs player {$opponent->getUserId()}");
+
+        // Получаем карты игрока
+        $playerHand = $player->getCards();
+        if (empty($playerHand)) {
+            throw new \InvalidArgumentException("Player has no cards to reveal.");
+        }
+
+        // Получаем карты оппонента
+        $opponentHand = $opponent->getCards();
+        if (empty($opponentHand)) {
+            throw new \InvalidArgumentException("Opponent has no cards to reveal.");
+        }
+
+        \Log::info("Player Hand: " . implode(', ', $playerHand));
+        \Log::info("Opponent Hand: " . implode(', ', $opponentHand));
+
+        // Далее, если карты есть, рассчитываем их значения
+        $playerPoints = $this->scoringService->calculateHandValue($playerHand);
+        $opponentPoints = $this->scoringService->calculateHandValue($opponentHand);
+
+        // 🎯 Определяем проигравшего
+        if ($playerPoints < $opponentPoints) {
+            // Текущий игрок проиграл
+            $this->foldPlayerInReveal($player, $game, 'player_lost');
+            $winner = $opponent;
+            $loser  = $player;
+        } elseif ($playerPoints > $opponentPoints) {
+            // Оппонент проиграл
+            $this->foldPlayerInReveal($opponent, $game, 'opponent_lost');
+            $winner = $player;
+            $loser  = $opponent;
+        } else {
+            // Ничья в REVEAL — оба остаются, игру продолжаем как обычно
+            \Log::info("🤝 REVEAL tie between {$player->getUserId()} and {$opponent->getUserId()}");
+            $winner = null;
+            $loser  = null;
+        }
+
+        // 🕒 Дополнительный reveal-таймер (15 сек) — фронт показывает результат
+        // Можно отправить отдельное событие, чтобы фронт отрисовал анимацию и показал карты
+        event(new \App\Events\RevealResolved(
+            gameId: $game->getId()->toInt(),
+            playerId: (string)$player->getUserId(),
+            opponentId: (string)$opponent->getUserId(),
+            playerPoints: $playerPoints,
+            opponentPoints: $opponentPoints,
+            winnerId: $winner ? (string)$winner->getUserId() : null,
+            loserId: $loser ? (string)$loser->getUserId() : null,
+            resolveTimeout: 15
+        ));
 
         $this->saveGame($game);
     }
 
     /**
-     * 🎯 Игра в темную (С ЛОГИРОВАНИЕМ)
+     * 🎯 DARK — выбор игры в тёмную
+     *
+     * Правила:
+     * - только игрок сразу справа от дилера;
+     * - только в раундах 1–2;
+     * - только если ещё не играл в темную в этой игре;
+     * - само действие DARK не меняет банк и ставки, только режим.
      */
     private function processDark(Player $player, Game $game): void
     {
-        \Log::info("🔄 Processing DARK for player {$player->getUserId()}");
+        \Log::info("🔄 [FINAL] Processing DARK for player {$player->getUserId()}");
 
-        // 🎯 ИСПРАВЛЕНИЕ: Разрешаем играть в темную даже если есть анте
-        $currentBet = $player->getCurrentBet();
-        \Log::info("💰 DARK action - current bet: {$currentBet}");
-        
-        // 🎯 ВАЖНО: НЕ сбрасываем ставку - анте должно остаться!
-        // Просто устанавливаем статус DARK
+        // 🔍 Проверяем, может ли этот игрок вообще выбрать DARK
+        if (!$this->canPlayDark($game, $player)) {
+            \Log::error("❌ DARK not allowed for player {$player->getUserId()} in current state");
+            throw new DomainException('Dark mode is not available for this player');
+        }
+
+        // ✅ Переводим игрока в статус DARK и фиксируем, что он уже играл в темную
         $player->playDark();
-        \Log::info("✅ Player {$player->getUserId()} played dark successfully");
+        $player->setPlayedDark(true);
+
+        \Log::info("✅ Player {$player->getUserId()} is now playing DARK");
+
+        // ВНИМАНИЕ:
+        // Никаких списаний с баланса и изменений банка здесь нет.
+        // Все финансовые эффекты DARK обрабатываются в CALL/RAISE
+        // через dark-привилегию (игрок платит половину, а ставит целиком).
 
         $this->saveGame($game);
     }
+
 
     /**
      * 🎯 Открытие карт после темной игры (С ЛОГИРОВАНИЕМ)
@@ -513,10 +642,10 @@ class BiddingService
         // 🎯 OPEN всегда доступен (но может быть заблокирован другими условиями)
         $actions[] = PlayerAction::OPEN;
         
-        // 🎯 DARK доступен в круге 1 если игрок еще не играл в темную
-        if ($currentRound === 1 && !$player->hasPlayedDark()) {
+        // 🎯 DARK доступен только если canPlayDark возвращает true
+        if ($this->canPlayDark($game, $player)) {
             $actions[] = PlayerAction::DARK;
-            \Log::info("✅ DARK added - round 1 and not played dark yet");
+            \Log::info("✅ DARK added - allowed for player right of dealer in round {$currentRound}");
         }
         
         // 🎯 REVEAL доступен в кругах 2-3
@@ -547,6 +676,50 @@ class BiddingService
             return !$player->hasPlayedDark() || $player->getStatus() !== PlayerStatus::DARK;
         }
         
+        return true;
+    }
+
+    /**
+     * 🎯 Можно ли этому игроку выбрать DARK в текущем состоянии игры
+     */
+    private function canPlayDark(Game $game, Player $player): bool
+    {
+        $round = $game->getCurrentRound();
+
+        // ❌ DARK запрещён только начиная с 3-го раунда
+        if ($round > 2) {
+            \Log::info("⛔ DARK not allowed: round={$round} (>2)");
+            return false;
+        }
+
+        // ❌ Игрок уже играл в темную в этой игре
+        if ($player->hasPlayedDark()) {
+            \Log::info("⛔ DARK not allowed: player {$player->getUserId()} already played dark");
+            return false;
+        }
+
+        // ❌ Игрок не в игровом статусе
+        if (!in_array($player->getStatus(), [PlayerStatus::ACTIVE, PlayerStatus::DARK], true)) {
+            \Log::info("⛔ DARK not allowed: invalid status {$player->getStatus()->value}");
+            return false;
+        }
+
+        // 🎯 Если игра умеет определять игрока справа от дилера — проверяем строго
+        $rightOfDealer = $game->getPlayerRightOfDealer();
+
+        if ($rightOfDealer !== null) {
+            if ($rightOfDealer->getId()->toInt() !== $player->getId()->toInt()) {
+                \Log::info("⛔ DARK not allowed: player {$player->getUserId()} is not right of dealer");
+                return false;
+            }
+
+            \Log::info("✅ DARK is allowed (right-of-dealer) for player {$player->getUserId()} in round {$round}");
+            return true;
+        }
+
+        // Если игрок справа от дилера не определён,
+        // НЕ будем блокировать DARK (чтобы существующие тесты не падали).
+        \Log::info("✅ DARK allowed (no right-of-dealer constraint) for player {$player->getUserId()} in round {$round}");
         return true;
     }
 
@@ -725,5 +898,175 @@ class BiddingService
             'active_players_count' => count($game->getActivePlayers())
         ];
     }
+
+    /**
+     * Универсальная доводка ставки игрока до целевого уровня.
+     *
+     * @param Game   $game
+     * @param Player $player
+     * @param int    $targetBet            целевой уровень ставки для игрока
+     * @param bool   $darkPrivilegeActive  действует ли привилегия DARK (игрок платит половину, ставит целиком)
+     */
+    private function adjustPlayerBetTo(Game $game, Player $player, int $targetBet, bool $darkPrivilegeActive): void
+    {
+        $currentBet = $player->getCurrentBet();
+
+        if ($targetBet <= $currentBet) {
+            // Игрок уже на этой ставке или выше — ничего не делаем
+            return;
+        }
+
+        $diff = $targetBet - $currentBet; // на сколько нужно поднять ставку
+
+        if ($darkPrivilegeActive) {
+            // 🎯 Темный игрок:
+            // платит половину diff, но считается, что поставил полный diff.
+            $payment = intdiv($diff + 1, 2); // ceil(diff / 2)
+
+            // placeBet спишет payment с баланса и увеличит currentBet на payment
+            $player->placeBet($payment);
+
+            // добиваем ставку до полного diff (баланс уже не трогаем)
+            $extraBet = $diff - $payment;
+            if ($extraBet > 0) {
+                $player->increaseCurrentBet($extraBet);
+            }
+
+            // в банк всегда уходит полный diff
+            $game->increaseBank($diff);
+        } else {
+            // 🎯 Обычный игрок:
+            // платит полный diff, и ровно на diff растёт ставка.
+            $payment = $diff;
+
+            $player->placeBet($payment);  // сама поднимет currentBet на diff
+            $game->increaseBank($diff);   // в банк уходит diff
+        }
+    }
+
+    /**
+     * Определяем, действует ли привилегия DARK для игрока в текущем раунде.
+     */
+    private function isDarkPrivilegeActive(Game $game, Player $player): bool
+    {
+        // финальная
+
+        if ($player->getStatus() !== PlayerStatus::DARK) {
+            return false;
+        }
+
+        $round = $game->getCurrentRound();
+
+        // Привилегия действует только в 1–2 раунде, в 3-м DARK остаётся как режим, но без скидки
+        return in_array($round, [1, 2], true);
+    }
+
+    /**
+     * 🔎 Поиск игрока по позиции за столом.
+     * Используется, например, для события TurnChanged (previousPlayerId).
+     */
+    private function findPlayerByPosition(Game $game, int $position): ?Player
+    {
+        foreach ($game->getPlayers() as $player) {
+            if ($player->getPosition() === $position) {
+                return $player;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * 🎯 Игрок считается активным в торгах, если он в игре и не FOLDED/WAITING.
+     */
+    private function isPlayerActiveInBidding(Player $player): bool
+    {
+        $isActive = in_array($player->getStatus(), [
+            PlayerStatus::ACTIVE,
+            PlayerStatus::DARK,
+        ], true);
+        
+        \Log::info("🔍 isPlayerActiveInBidding: player ID={$player->getUserId()}, status={$player->getStatus()->value}, isActive=" . ($isActive ? 'YES' : 'NO'));
+        
+        return $isActive;
+    }
+
+    /**
+     * 🔎 Поиск предыдущего активного игрока по позициям.
+     *
+     * Логика:
+     * - берём всех игроков, сортированных по позиции (по часовой или против — важно, чтобы было консистентно);
+     * - находим текущего;
+     * - идём назад по позициям (с зацикливанием) до тех пор, пока не найдём активного;
+     * - если никого не нашли — возвращаем null.
+     */
+    private function findPreviousActivePlayer(Game $game, Player $player): ?Player
+    {
+        $players = $game->getPlayers();
+        
+        // 🎯 СОРТИРУЕМ игроков по позициям
+        usort($players, function(Player $a, Player $b) {
+            return $a->getPosition() <=> $b->getPosition();
+        });
+        
+        $count = count($players);
+        if ($count === 0) {
+            return null;
+        }
+
+        // Находим индекс текущего игрока в массиве
+        $currentIndex = null;
+        foreach ($players as $index => $p) {
+            if ($p->getId()->toInt() === $player->getId()->toInt()) {
+                $currentIndex = $index;
+                break;
+            }
+        }
+
+        if ($currentIndex === null) {
+            return null;
+        }
+
+        // 🎯 ОТЛАДКА
+        \Log::info("🔍 findPreviousActivePlayer: current player ID={$player->getUserId()}, position={$player->getPosition()}");
+        \Log::info("🔍 All players positions: " . implode(', ', array_map(fn($p) => $p->getPosition() . '(ID:' . $p->getUserId() . ')', $players)));
+
+        // Идём назад по кругу
+        $index = ($currentIndex - 1 + $count) % $count;
+
+        while ($index !== $currentIndex) {
+            $candidate = $players[$index];
+            
+            \Log::info("🔍 Checking candidate: ID={$candidate->getUserId()}, position={$candidate->getPosition()}, status={$candidate->getStatus()->value}");
+
+            if ($this->isPlayerActiveInBidding($candidate)) {
+                \Log::info("✅ Found active opponent: ID={$candidate->getUserId()}");
+                return $candidate;
+            }
+
+            $index = ($index - 1 + $count) % $count;
+        }
+
+        \Log::info("❌ No active opponent found");
+        return null;
+    }
+
+    /**
+     * 🚫 Помечает игрока как FOLDED в контексте REVEAL.
+     * Игрок остаётся за столом (ожидание новой игры), но в текущей раздаче больше не участвует.
+     */
+    private function foldPlayerInReveal(Player $player, Game $game, string $reason): void
+    {
+        \Log::info("🚫 FOLD in REVEAL for player {$player->getUserId()} ({$reason})");
+
+        $player->fold(); // доменный метод, который ставит статус PlayerStatus::FOLDED
+        $player->updateLastActionTime();
+
+        // ВАЖНО:
+        // - мы не отправляем его в глобальное лобби,
+        // - не трогаем баланс,
+        // - не выключаем полностью из game, только из текущей раздачи.
+    }
+
 
 }

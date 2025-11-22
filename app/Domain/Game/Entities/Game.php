@@ -53,8 +53,7 @@ class Game
 
     public function addPlayer(Player $player): void
     {
-        // 🎯 ИСПРАВЛЕНИЕ: Проверяем по user_id вместо PlayerId
-        if ($this->hasPlayerByUserId($player->getUserId())) {
+        if ($this->hasPlayer($player->getId())) {
             throw new DomainException('Player already in game');
         }
 
@@ -66,13 +65,19 @@ class Game
         $this->players[] = $player;
     }
 
-    /**
-     * 🎯 Проверить наличие игрока по user_id
-     */
-    private function hasPlayerByUserId(int $userId): bool
+    public function initiateQuarrel(array $winningPlayers): void
+    {
+        if (!$this->status->canInitiateQuarrel()) {
+            throw new DomainException('Cannot initiate quarrel in current status');
+        }
+
+        $this->status = GameStatus::QUARREL;
+    }
+
+    private function hasPlayer(PlayerId $playerId): bool
     {
         foreach ($this->players as $player) {
-            if ($player->getUserId() === $userId) {
+            if ($player->getId()->equals($playerId)) {
                 return true;
             }
         }
@@ -285,4 +290,24 @@ class Game
         }
         return null;
     }
+
+    public function increaseBank(int $amount): void
+    {
+        // финальная
+        $this->bank += $amount;
+    }
+
+    /**
+     * 🎯 Получить игрока по ID пользователя
+     */
+    public function getPlayerById(int $userId): ?Player
+    {
+        foreach ($this->players as $player) {
+            if ($player->getUserId() === $userId) {
+                return $player;
+            }
+        }
+        return null;
+    }
+
 }

@@ -189,7 +189,9 @@ class Player
 
     public function playDark(): void
     {
+        // 🎯 Игрок переходит в статус DARK и помечается как игравший в темную в этой игре
         $this->status = PlayerStatus::DARK;
+        $this->hasPlayedDark = true;
         $this->updateLastActionTime();
     }
 
@@ -270,13 +272,11 @@ class Player
         // currentBet НЕ сбрасываем - он накапливается
     }
 
-    /**
-     * 🎯 Сбросить текущую ставку (для темной игры)
-     */
-    // public function resetCurrentBet(): void
-    // {
-    //     $this->currentBet = 0;
-    //     \Log::info("🔄 Player {$this->userId} current bet reset to 0");
-    // }
+    public function increaseCurrentBet(int $amount): void
+    {
+        // финальная
+        $this->currentBet += $amount;
+    }
+
 
 }
