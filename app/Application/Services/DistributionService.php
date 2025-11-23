@@ -147,7 +147,7 @@ class DistributionService
             'suit' => $card->getSuit()->value ?? $card->getSuit(),
             'rank' => $card->getRank()->value ?? $card->getRank(),
             'is_face_up' => false, // 🎯 Карты раздаются рубашкой вверх
-            'is_joker' => $card->isJoker() ?? ($card->getRank() === CardRank::SIX && $card->getSuit() === CardSuit::CLUBS),
+            'is_joker' => $card->getRank() === CardRank::SIX && $card->getSuit() === CardSuit::CLUBS,
         ];
     }
 

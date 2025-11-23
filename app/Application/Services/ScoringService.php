@@ -23,6 +23,41 @@ class ScoringService
         
         throw new \InvalidArgumentException("Invalid number of cards: " . $cardCount);
     }
+
+    public function calculateDomainHandValue(array $domainCards): int
+    {
+        // Конвертируем Domain карты в строковое представление
+        $stringCards = array_map(function(Card $card) {
+            return $this->convertDomainCardToString($card);
+        }, $domainCards);
+        
+        // Используем существующую логику
+        return $this->calculateHandValue($stringCards);
+    }
+
+    private function convertDomainCardToString(Card $card): string
+    {
+        $rankMap = [
+            CardRank::TEN->value => '10',
+            CardRank::JACK->value => 'J', 
+            CardRank::QUEEN->value => 'Q',
+            CardRank::KING->value => 'K',
+            CardRank::ACE->value => 'A',
+            CardRank::SIX->value => '6',
+        ];
+        
+        $suitMap = [
+            CardSuit::HEARTS->value => '♥',
+            CardSuit::DIAMONDS->value => '♦',
+            CardSuit::CLUBS->value => '♣',
+            CardSuit::SPADES->value => '♠',
+        ];
+        
+        $rankStr = $rankMap[$card->getRank()->value] ?? '?';
+        $suitStr = $suitMap[$card->getSuit()->value] ?? '?';
+        
+        return $rankStr . $suitStr;
+    }
     
     private function calculateThreeCardHand(array $cards): int
     {
@@ -39,7 +74,7 @@ class ScoringService
             $suitCombo = $this->checkSuitCombinations($suits, false, $ranks);
             if ($suitCombo > 0) return $suitCombo;
             
-            return $this->getBaseCombination($suits, false, $ranks);
+            return $this->calculateWithoutJokerLogic($cards);
         }
         
         // 🎯 НОВАЯ ЛОГИКА С ДЖОКЕРОМ
@@ -58,16 +93,155 @@ class ScoringService
             }
         }
         
+        return $this->calculateWithOptimalJoker($cards);
+    }
+
+    private function calculateWithOptimalJoker(array $cards): int
+    {
+        $bestScore = 10; // Минимальный счет
+        
+        // Вместо перебора 20 вариантов, анализируем логически
+        $optimalReplacements = $this->getOptimalJokerReplacements($cards);
+        
+        foreach ($optimalReplacements as $replacement) {
+            $replacedCards = $this->replaceJoker($cards, $replacement);
+            $score = $this->calculateWithoutJokerLogic($replacedCards);
+            
+            if ($score > $bestScore) {
+                $bestScore = $score;
+                
+                // Если нашли максимальную комбинацию - останавливаемся
+                if ($bestScore >= 37) break;
+            }
+        }
+        
         return $bestScore;
+    }
+
+    private function getOptimalJokerReplacements(array $cards): array
+    {
+        $suits = $this->getSuits($cards);
+        $ranks = $this->getRanks($cards);
+        
+        $replacements = [];
+        
+        // 🎯 Стратегия 1: Попытаться сделать СЕКА комбинацию (37-33 очка)
+        $existingRanks = array_filter($ranks, fn($rank) => $rank !== '6');
+        if (count($existingRanks) === 2) {
+            $rankCounts = array_count_values($existingRanks);
+            $mostCommonRank = array_search(max($rankCounts), $rankCounts);
+            
+            // Становимся третьей картой того же ранга
+            $commonSuits = array_count_values($suits);
+            $mostCommonSuit = array_search(max($commonSuits), $commonSuits);
+            $replacements[] = $mostCommonRank . $mostCommonSuit;
+        }
+        
+        // 🎯 Стратегия 2: Попытаться сделать 32 очка (Джокер + Туз + карта той же масти)
+        if (in_array('A', $ranks)) {
+            $aceIndex = array_search('A', $ranks);
+            $aceSuit = $suits[$aceIndex];
+            $replacements[] = 'A' . $aceSuit; // Становимся вторым тузом той же масти
+        }
+        
+        // 🎯 Стратегия 3: Попытаться сделать 31 очко (три одной масти)
+        $suitCounts = array_count_values($suits);
+        if (max($suitCounts) === 2) {
+            $commonSuit = array_search(2, $suitCounts);
+            $replacements[] = 'A' . $commonSuit; // Становимся тузом общей масти
+            $replacements[] = 'K' . $commonSuit; // Или королем
+            $replacements[] = 'Q' . $commonSuit; // Или дамой
+            $replacements[] = 'J' . $commonSuit; // Или вальтом
+            $replacements[] = '10' . $commonSuit; // Или десяткой
+        }
+        
+        // 🎯 Стратегия 4: Для двух карт - становимся картой чтобы создать пару мастей
+        if (count($cards) === 2) {
+            $otherCards = array_values(array_filter($cards, fn($card) => $card !== '6♣'));
+            
+            // 🔧 ИСПРАВЛЕНИЕ: array_values() сбрасывает ключи
+            if (!empty($otherCards)) {
+                $otherCard = $otherCards[0];
+                $otherRank = mb_substr($otherCard, 0, -1);
+                $otherSuit = mb_substr($otherCard, -1);
+                
+                // Становимся картой той же масти для 21 очка
+                $replacements[] = 'A' . $otherSuit; // Туз той же масти = 21 очко
+                $replacements[] = 'K' . $otherSuit; // Король той же масти = 21 очко
+                $replacements[] = $otherRank . $otherSuit; // Та же карта = 21 очко
+            } else {
+                // Если только джокер - становимся тузом
+                $replacements[] = 'A♥';
+                $replacements[] = 'A♠';
+                $replacements[] = 'A♦';
+                $replacements[] = 'A♣';
+            }
+        }
+        
+        // 🎯 Стратегия 5: Для трех карт с разными мастями - становимся тузом
+        if (count($cards) === 3 && count(array_unique($suits)) === 3) {
+            // Выбираем масть которая даст нам туза для 21 очка
+            $replacements[] = 'A♥';
+            $replacements[] = 'A♠'; 
+            $replacements[] = 'A♦';
+            $replacements[] = 'A♣';
+        }
+        
+        // 🎯 Стратегия 6: Базовые варианты на всякий случай
+        $replacements[] = 'A♥'; // Туз черви
+        $replacements[] = 'K♥'; // Король черви
+        $replacements[] = 'Q♥'; // Дама черви
+        $replacements[] = 'J♥'; // Вальт черви
+        $replacements[] = '10♥'; // Десятка черви
+        
+        return array_unique($replacements);
+    }
+
+    private function calculateWithoutJokerLogic(array $cards): int
+    {
+        // Выносим логику подсчета без джокера в отдельный метод
+        $suits = $this->getSuits($cards);
+        $ranks = $this->getRanks($cards);
+        
+        $specialCombo = $this->checkSpecialCombinations($ranks, false);
+        if ($specialCombo > 0) return $specialCombo;
+        
+        $suitCombo = $this->checkSuitCombinations($suits, false, $ranks);
+        if ($suitCombo > 0) return $suitCombo;
+        
+        return $this->getBaseCombination($suits, false, $ranks);
     }
     
     private function calculateTwoCardHand(array $cards): int
     {
         $hasJoker = $this->hasJoker($cards);
-        $suits = $this->getSuits($cards);
-        $ranks = $this->getRanks($cards);
         
-        return $this->getTwoCardCombination($suits, $hasJoker, $ranks);
+        if (!$hasJoker) {
+            $suits = $this->getSuits($cards);
+            $ranks = $this->getRanks($cards);
+            return $this->getTwoCardCombination($suits, false, $ranks);
+        }
+        
+        // 🎯 УЛУЧШЕННАЯ ЛОГИКА ДЖОКЕРА ДЛЯ ДВУХ КАРТ
+        $bestScore = 20; // Минимальный счет для двух карт
+        
+        $optimalReplacements = $this->getOptimalJokerReplacements($cards);
+        
+        foreach ($optimalReplacements as $replacement) {
+            $replacedCards = $this->replaceJoker($cards, $replacement);
+            $suits = $this->getSuits($replacedCards);
+            $ranks = $this->getRanks($replacedCards);
+            
+            $score = $this->getTwoCardCombination($suits, false, $ranks);
+            if ($score > $bestScore) {
+                $bestScore = $score;
+            }
+            
+            // Если нашли максимальную комбинацию - останавливаемся
+            if ($bestScore >= 22) break;
+        }
+        
+        return $bestScore;
     }
     
     private function checkSpecialCombinations(array $ranks, bool $hasJoker): int
@@ -331,11 +505,8 @@ class ScoringService
      */
     private function isJokerAceSameSuitCombo(array $cards): bool
     {
-        // формат карт в тестах: '6♣', 'Т♥', '10♥'
-        // То есть:
-        // - джокер: '6♣'
-        // - туз:   'Т♦/Т♥/...'
-        // - третья карта той же масти, что и туз
+        // формат карт в тестах: '6♣', 'A♥', '10♥'
+        // Теперь используем английские обозначения: A вместо Т
 
         if (!in_array('6♣', $cards, true)) {
             return false;
@@ -351,16 +522,16 @@ class ScoringService
         [$c1, $c2] = $others;
 
         // Разбираем строки, предполагая формат: [ранг][масть]
-        // Например: 'Т♥', '10♥', 'K♦'.
+        // Теперь используем английские A вместо русских Т
         $rank1 = mb_substr($c1, 0, -1, 'UTF-8');
         $suit1 = mb_substr($c1, -1, null, 'UTF-8');
 
         $rank2 = mb_substr($c2, 0, -1, 'UTF-8');
         $suit2 = mb_substr($c2, -1, null, 'UTF-8');
 
-        // Один из них должен быть Туз ('Т'), другой — любая карта, но той же масти
-        $isFirstAce  = ($rank1 === 'Т');
-        $isSecondAce = ($rank2 === 'Т');
+        // Один из них должен быть Туз ('A'), другой — любая карта, но той же масти
+        $isFirstAce  = ($rank1 === 'A');  // ← ИЗМЕНИЛ 'Т' на 'A'
+        $isSecondAce = ($rank2 === 'A');  // ← ИЗМЕНИЛ 'Т' на 'A'
 
         if ($isFirstAce && !$isSecondAce && $suit1 === $suit2) {
             return true;

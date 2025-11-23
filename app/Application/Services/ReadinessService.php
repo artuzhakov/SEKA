@@ -10,12 +10,14 @@ use App\Domain\Game\Entities\Player;
 use App\Domain\Game\Enums\GameStatus;
 use App\Domain\Game\Enums\PlayerStatus;
 use App\Domain\Game\Repositories\CachedGameRepository;
+use App\Domain\Game\Repositories\GameRepositoryInterface;
 use DomainException;
 
 class ReadinessService
 {
     public function __construct(
-        private BiddingService $biddingService
+        private BiddingService $biddingService,
+        private GameRepositoryInterface $gameRepository
     ) {}
 
     /**
@@ -48,15 +50,13 @@ class ReadinessService
             \Log::info("🎯 Starting game automatically...");
             $this->startGame($game);
             \Log::info("🎯 Game started! New status: " . $game->getStatus()->value);
-            
-            // 🎯 СОХРАНЯЕМ игру после старта
-            $this->saveGame($game);
         } else {
             \Log::info("❌ Game cannot start yet");
-            
-            // 🎯 СОХРАНЯЕМ игру даже если не стартовала
-            $this->saveGame($game);
         }
+        
+        // 🎯 СОХРАНЯЕМ игру после изменений
+        $this->gameRepository->save($game);
+        \Log::info("💾 Game saved to repository");
         \Log::info("=== END DIAGNOSTICS ===");
     }
 

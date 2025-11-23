@@ -230,10 +230,9 @@ class BiddingServiceTest extends TestCase
 
     private function createGameWithDealer(int $dealerPosition): Game
     {
-        // ИСПРАВЛЕНО: создаем игру в статусе WAITING
         $game = new Game(
-            GameId::fromInt(1), // Теперь GameId распознается
-            GameStatus::WAITING, // WAITING чтобы можно было добавлять игроков
+            GameId::fromInt(1),
+            GameStatus::WAITING,
             1,
             GameMode::OPEN
         );
@@ -248,7 +247,18 @@ class BiddingServiceTest extends TestCase
         $game->startBidding();
         
         $game->setDealerPosition($dealerPosition);
-        $game->setCurrentPlayerPosition($dealerPosition);
+        
+        // 🎯 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Устанавливаем игрока справа от дилера как текущего
+        $rightPlayer = $game->getPlayerRightOfDealer();
+        if ($rightPlayer) {
+            $game->setCurrentPlayerPosition($rightPlayer->getPosition());
+        } else {
+            // Если не нашли, устанавливаем первого активного
+            $activePlayers = $game->getActivePlayers();
+            if (!empty($activePlayers)) {
+                $game->setCurrentPlayerPosition($activePlayers[0]->getPosition());
+            }
+        }
         
         return $game;
     }
@@ -463,5 +473,390 @@ class BiddingServiceTest extends TestCase
         $this->biddingService->processPlayerAction($game, $player, PlayerAction::RAISE, $amount);
     }
 
+        /** @test */
+    public function it_processes_call_action_with_payment()
+    {
+        $game = $this->createTestGameWithPlayers(3);
+        $player = $game->getActivePlayers()[0];
+        
+        // Устанавливаем текущую ставку выше чем у игрока
+        $game->setCurrentMaxBet(100);
+        $player->setCurrentBet(50); // Игрок должен доплатить 50
+        
+        $initialBalance = $player->getBalance();
+        $initialBank = $game->getBank();
+        
+        $this->biddingService->processPlayerAction($game, $player, PlayerAction::CALL);
+        
+        $this->assertEquals($initialBalance - 50, $player->getBalance());
+        $this->assertEquals($initialBank + 50, $game->getBank());
+        $this->assertEquals(100, $player->getCurrentBet());
+    }
+
+    /** @test */
+    public function it_processes_call_action_without_payment_when_already_at_max_bet()
+    {
+        $game = $this->createTestGameWithPlayers(3);
+        $player = $game->getActivePlayers()[0];
+        
+        // Игрок уже на максимальной ставке
+        $game->setCurrentMaxBet(100);
+        $player->setCurrentBet(100);
+        
+        $initialBalance = $player->getBalance();
+        $initialBank = $game->getBank();
+        
+        $this->biddingService->processPlayerAction($game, $player, PlayerAction::CALL);
+        
+        // Баланс и банк не должны измениться
+        $this->assertEquals($initialBalance, $player->getBalance());
+        $this->assertEquals($initialBank, $game->getBank());
+        $this->assertEquals(100, $player->getCurrentBet());
+    }
+
+    /** @test */
+    public function it_processes_check_action_successfully()
+    {
+        $game = $this->createTestGameWithPlayers(3);
+        $player = $game->getActivePlayers()[0];
+        
+        // Устанавливаем равные ставки для возможности CHECK
+        $game->setCurrentMaxBet(50);
+        $player->setCurrentBet(50);
+        
+        $this->biddingService->processPlayerAction($game, $player, PlayerAction::CHECK);
+        
+        $this->assertTrue($player->hasChecked());
+    }
+
+    /** @test */
+    public function it_throws_exception_when_checking_with_unequal_bets()
+    {
+        $this->expectException(\DomainException::class);
+        $this->expectExceptionMessage('Cannot check when there is a bet to call');
+        
+        $game = $this->createTestGameWithPlayers(3);
+        $player = $game->getActivePlayers()[0];
+        
+        // Игрок должен доплатить - CHECK невозможен
+        $game->setCurrentMaxBet(100);
+        $player->setCurrentBet(50);
+        
+        $this->biddingService->processPlayerAction($game, $player, PlayerAction::CHECK);
+    }
+
+    /** @test */
+    public function it_processes_open_action_after_dark()
+    {
+        $game = $this->createTestGameWithPlayers(3);
+        $player = $game->getActivePlayers()[0];
+        
+        // Сначала переводим игрока в DARK
+        $player->playDark();
+        $this->assertEquals(PlayerStatus::DARK, $player->getStatus());
+        
+        // Затем открываем карты
+        $this->biddingService->processPlayerAction($game, $player, PlayerAction::OPEN);
+        
+        $this->assertEquals(PlayerStatus::ACTIVE, $player->getStatus());
+    }
+
+    /** @test */
+    public function it_throws_exception_when_opening_without_being_in_dark()
+    {
+        $this->expectException(\DomainException::class);
+        $this->expectExceptionMessage('Can only open cards after playing dark');
+        
+        $game = $this->createTestGameWithPlayers(3);
+        $player = $game->getActivePlayers()[0];
+        
+        // Игрок не в DARK статусе
+        $this->assertEquals(PlayerStatus::ACTIVE, $player->getStatus());
+        
+        $this->biddingService->processPlayerAction($game, $player, PlayerAction::OPEN);
+    }
+
+    /** @test */
+    public function it_throws_exception_for_reveal_in_round_1()
+    {
+        $this->expectException(\DomainException::class);
+        $this->expectExceptionMessage('Reveal is not allowed in the first round');
+        
+        $game = $this->createTestGameWithPlayers(3);
+        $player = $game->getActivePlayers()[0];
+        
+        // Раунд 1 - REVEAL запрещен
+        $game->setCurrentRound(1);
+        
+        $this->biddingService->processPlayerAction($game, $player, PlayerAction::REVEAL);
+    }
+
+    /** @test */
+    public function it_throws_exception_when_no_opponent_for_reveal()
+    {
+        $this->expectException(\DomainException::class);
+        $this->expectExceptionMessage('No opponent available for reveal');
+        
+        $game = $this->createTestGameWithPlayers(2);
+        $players = $game->getActivePlayers();
+        
+        // Раунд 2 - REVEAL разрешен
+        $game->setCurrentRound(2);
+        
+        // Устанавливаем карты всем игрокам
+        foreach ($players as $player) {
+            $player->receiveCards(['10♥', 'J♦', 'Q♣']);
+            $this->setPrivateProperty($player, 'balance', 1000);
+        }
+        
+        $initiator = $players[0];
+        $opponent = $players[1];
+        
+        // Делаем оппонента неактивным (FOLDED)
+        $opponent->fold();
+        
+        $this->biddingService->processPlayerAction($game, $initiator, PlayerAction::REVEAL);
+    }
+
+    /** @test */
+    public function it_throws_exception_for_dark_in_round_3()
+    {
+        $this->expectException(\DomainException::class);
+        $this->expectExceptionMessage('Dark mode is not available for this player');
+        
+        $game = $this->createGameWithDealer(2);
+        $rightPlayer = $game->getPlayerRightOfDealer();
+        
+        // 🎯 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Устанавливаем текущего игрока
+        $game->setCurrentPlayerPosition($rightPlayer->getPosition());
+        
+        // Раунд 3 - DARK запрещен
+        $game->setCurrentRound(3);
+        
+        $this->biddingService->processPlayerAction($game, $rightPlayer, PlayerAction::DARK);
+    }
+
+    /** @test */
+    public function it_throws_exception_for_dark_when_already_played_dark()
+    {
+        $this->expectException(\DomainException::class);
+        $this->expectExceptionMessage('Dark mode is not available for this player');
+        
+        $game = $this->createGameWithDealer(2);
+        $rightPlayer = $game->getPlayerRightOfDealer();
+        
+        // 🎯 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Устанавливаем текущего игрока
+        $game->setCurrentPlayerPosition($rightPlayer->getPosition());
+        
+        // Игрок уже играл в темную
+        $rightPlayer->setPlayedDark(true);
+        
+        $this->biddingService->processPlayerAction($game, $rightPlayer, PlayerAction::DARK);
+    }
+
+    /** @test */
+    public function it_throws_exception_when_player_not_in_turn()
+    {
+        $this->expectException(\DomainException::class);
+        $this->expectExceptionMessage('Not your turn');
+        
+        $game = $this->createTestGameWithPlayers(3);
+        $currentPlayer = $this->findPlayerByPosition($game, $game->getCurrentPlayerPosition());
+        $otherPlayer = null;
+        
+        // Находим игрока, который не сейчас ходит
+        foreach ($game->getActivePlayers() as $player) {
+            if ($player->getPosition() !== $game->getCurrentPlayerPosition()) {
+                $otherPlayer = $player;
+                break;
+            }
+        }
+        
+        $this->assertNotNull($otherPlayer, "Should find a player who is not currently in turn");
+        
+        $this->biddingService->processPlayerAction($game, $otherPlayer, PlayerAction::CHECK);
+    }
+
+    /** @test */
+    public function it_throws_exception_when_player_cannot_make_moves()
+    {
+        $this->expectException(\DomainException::class);
+        $this->expectExceptionMessage('Player cannot make moves');
+        
+        $game = $this->createTestGameWithPlayers(3);
+        $player = $game->getActivePlayers()[0];
+        
+        // Делаем игрока неактивным
+        $player->fold();
+        
+        $this->biddingService->processPlayerAction($game, $player, PlayerAction::CHECK);
+    }
+
+    /** @test */
+    public function it_ends_bidding_round_when_only_one_player_remains()
+    {
+        $game = $this->createTestGameWithPlayers(3);
+        $players = $game->getActivePlayers();
+        
+        // Все игроки кроме одного пасуют
+        for ($i = 1; $i < count($players); $i++) {
+            $players[$i]->fold();
+        }
+        
+        $remainingPlayer = $players[0];
+        
+        // Должен автоматически завершиться раунд торгов
+        $this->assertTrue($this->biddingService->shouldEndBiddingRound($game));
+        
+        // Проверяем что игра переходит в статус FINISHED
+        $this->invokePrivateMethod($this->biddingService, 'endBiddingRound', [$game]);
+        
+        $this->assertEquals(GameStatus::FINISHED, $game->getStatus());
+    }
+
+    /** @test */
+    public function it_calculates_dark_privilege_correctly()
+    {
+        $game = $this->createTestGameWithPlayers(3);
+        $player = $game->getActivePlayers()[0];
+        
+        // Игрок в DARK статусе
+        $player->playDark();
+        
+        // В раундах 1-2 привилегия активна
+        $game->setCurrentRound(1);
+        $isPrivilegeActive1 = $this->invokePrivateMethod(
+            $this->biddingService, 
+            'isDarkPrivilegeActive', 
+            [$game, $player]
+        );
+        $this->assertTrue($isPrivilegeActive1);
+        
+        $game->setCurrentRound(2);
+        $isPrivilegeActive2 = $this->invokePrivateMethod(
+            $this->biddingService, 
+            'isDarkPrivilegeActive', 
+            [$game, $player]
+        );
+        $this->assertTrue($isPrivilegeActive2);
+        
+        // В раунде 3 привилегия неактивна
+        $game->setCurrentRound(3);
+        $isPrivilegeActive3 = $this->invokePrivateMethod(
+            $this->biddingService, 
+            'isDarkPrivilegeActive', 
+            [$game, $player]
+        );
+        $this->assertFalse($isPrivilegeActive3);
+        
+        // Обычный игрок не имеет привилегии
+        $normalPlayer = $game->getActivePlayers()[1];
+        $game->setCurrentRound(1);
+        $isPrivilegeActiveNormal = $this->invokePrivateMethod(
+            $this->biddingService, 
+            'isDarkPrivilegeActive', 
+            [$game, $normalPlayer]
+        );
+        $this->assertFalse($isPrivilegeActiveNormal);
+    }
+
+    /** @test */
+    public function it_adjusts_player_bet_with_dark_privilege()
+    {
+        $game = $this->createTestGameWithPlayers(3);
+        $player = $game->getActivePlayers()[0];
+        
+        // Игрок в DARK статусе в раунде 1
+        $player->playDark();
+        $game->setCurrentRound(1);
+        
+        $initialBalance = $player->getBalance();
+        $initialBank = $game->getBank();
+        
+        // Темный игрок платит половину, но ставит полную сумму
+        $this->invokePrivateMethod(
+            $this->biddingService,
+            'adjustPlayerBetTo',
+            [$game, $player, 100, true] // targetBet=100, darkPrivilege=true
+        );
+        
+        // Проверяем что игрок заплатил 50 (100/2), но его ставка = 100
+        $this->assertEquals($initialBalance - 50, $player->getBalance());
+        $this->assertEquals(100, $player->getCurrentBet());
+        $this->assertEquals($initialBank + 100, $game->getBank());
+    }
+
+    /** @test */
+    public function it_adjusts_player_bet_without_dark_privilege()
+    {
+        $game = $this->createTestGameWithPlayers(3);
+        $player = $game->getActivePlayers()[0];
+        
+        $initialBalance = $player->getBalance();
+        $initialBank = $game->getBank();
+        
+        // Обычный игрок платит полную сумму
+        $this->invokePrivateMethod(
+            $this->biddingService,
+            'adjustPlayerBetTo',
+            [$game, $player, 100, false] // targetBet=100, darkPrivilege=false
+        );
+        
+        // Проверяем что игрок заплатил 100 и его ставка = 100
+        $this->assertEquals($initialBalance - 100, $player->getBalance());
+        $this->assertEquals(100, $player->getCurrentBet());
+        $this->assertEquals($initialBank + 100, $game->getBank());
+    }
+
+    /** @test */
+    public function it_finds_previous_active_player_correctly()
+    {
+        $game = $this->createTestGameWithPlayers(4);
+        $players = $game->getActivePlayers();
+        
+        // Устанавливаем позиции в правильном порядке
+        foreach ($players as $index => $player) {
+            $this->setPrivateProperty($player, 'position', $index + 1);
+        }
+        
+        $currentPlayer = $players[2]; // Позиция 3
+        
+        $previousPlayer = $this->invokePrivateMethod(
+            $this->biddingService,
+            'findPreviousActivePlayer',
+            [$game, $currentPlayer]
+        );
+        
+        $this->assertNotNull($previousPlayer);
+        $this->assertEquals(2, $previousPlayer->getPosition()); // Должен быть игрок на позиции 2
+    }
+
+    /** @test */
+    public function it_handles_reveal_tie_correctly()
+    {
+        $game = $this->createTestGameWithPlayers(3);
+        $game->setCurrentRound(2);
+        $game->setCurrentMaxBet(50);
+
+        $players = $game->getActivePlayers();
+        $initiator = $players[0];
+        $opponent = $players[1];
+
+        // 🎯 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Устанавливаем карты ВСЕМ игрокам
+        foreach ($game->getPlayers() as $player) {
+            $player->receiveCards(['10♥', 'J♦', 'Q♣']); // одинаковые карты для всех
+            $this->setPrivateProperty($player, 'balance', 1000);
+        }
+        
+        // 🎯 Устанавливаем текущего игрока
+        $game->setCurrentPlayerPosition($initiator->getPosition());
+
+        // REVEAL с ничьей не должен приводить к FOLD
+        $this->biddingService->processPlayerAction($game, $initiator, PlayerAction::REVEAL);
+
+        // Оба игрока остаются активными
+        $this->assertNotEquals(PlayerStatus::FOLDED, $initiator->getStatus());
+        $this->assertNotEquals(PlayerStatus::FOLDED, $opponent->getStatus());
+    }
 
 }

@@ -17,7 +17,7 @@ class GameFinished implements ShouldBroadcast
 
     public function __construct(
         public int $gameId,
-        public string $winnerId,
+        public int $winnerId,
         public array $scores,
         public array $finalState
     ) {}
