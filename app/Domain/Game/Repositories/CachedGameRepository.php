@@ -4,9 +4,6 @@ namespace App\Domain\Game\Repositories;
 
 use App\Domain\Game\Entities\Game;
 use App\Domain\Game\ValueObjects\GameId;
-use App\Domain\Game\Entities\Player;
-use App\Domain\Game\ValueObjects\PlayerId;
-use App\Domain\Game\Enums\PlayerStatus;
 use App\Domain\Game\Enums\GameStatus;
 use App\Domain\Game\Enums\GameMode;
 use Illuminate\Support\Facades\Cache;
@@ -31,12 +28,9 @@ class CachedGameRepository
             return $game;
         }
         
-        // ✅ ИСПРАВЛЕНИЕ: создаем новую игру если не найдена
-        \Log::info("🎮 Creating NEW game for ID: {$id}");
-        $game = $this->createNewGame($id);
-        $this->save($game);
-        
-        return $game;
+        // ✅ ИСПРАВЛЕНИЕ: возвращаем null если игра не найдена
+        \Log::info("❌ Game {$id} NOT found in cache - returning null");
+        return null;
     }
 
     public function save(Game $game): void
@@ -48,17 +42,22 @@ class CachedGameRepository
         \Log::info("💾 Saved game {$id} to cache");
     }
 
-    private function createNewGame(int $gameId): Game
+    /**
+     * 🎯 СОЗДАТЬ НОВУЮ ИГРУ (с правильной базовой ставкой)
+     */
+    public function createNewGame(int $gameId, int $baseBet = 5): Game
     {
-        // 🎯 Создаем новую игру в статусе ожидания
+        // 🎯 ПРАВИЛЬНЫЕ ИМПОРТЫ
         $game = new Game(
-            GameId::fromInt($gameId),
-            GameStatus::WAITING,
+            \App\Domain\Game\ValueObjects\GameId::fromInt($gameId),
+            \App\Domain\Game\Enums\GameStatus::WAITING,
             $gameId,
-            GameMode::OPEN
+            \App\Domain\Game\Enums\GameMode::OPEN,
+            $baseBet // 🎯 Устанавливаем правильную базовую ставку
         );
 
-        \Log::info("🎯 Created NEW game {$gameId} with status: " . $game->getStatus()->value);
+        \Log::info("🎯 Created NEW game {$gameId} with base bet: {$baseBet}");
+        $this->save($game);
 
         return $game;
     }
@@ -70,15 +69,6 @@ class CachedGameRepository
         \Log::info("🗑️ Cleared game {$gameId} from cache");
     }
 
-    public function clearAll(): void
-    {
-        // 🎯 Очищаем все игры (для тестирования)
-        for ($i = 1; $i <= 10; $i++) {
-            Cache::forget(self::CACHE_KEY_PREFIX . $i);
-        }
-        \Log::info("🧹 Cleared ALL games from cache");
-    }
-
     /**
      * 🎯 Получить все игры из кэша
      */
@@ -86,17 +76,13 @@ class CachedGameRepository
     {
         $games = [];
         
+        // 🎯 Ищем игры в диапазоне 1-100
         for ($i = 1; $i <= 100; $i++) {
             $cacheKey = self::CACHE_KEY_PREFIX . $i;
             $game = Cache::get($cacheKey);
             
             if ($game) {
                 $games[] = $game;
-                \Log::info("✅ Found game in cache", [
-                    'game_id' => $i,
-                    'players_count' => count($game->getPlayers()),
-                    'status' => $game->getStatus()->value
-                ]);
             }
         }
         
@@ -105,4 +91,37 @@ class CachedGameRepository
         return $games;
     }
     
+    /**
+     * 🎯 Найти игру по ID или создать если не существует
+     */
+    public function findOrCreate(int $gameId, int $baseBet = 5): Game
+    {
+        $game = $this->find(GameId::fromInt($gameId));
+        
+        if (!$game) {
+            $game = $this->createNewGame($gameId, $baseBet);
+        }
+        
+        return $game;
+    }
+
+    /**
+     * 🎯 Сохранить список ID игр для лобби
+     */
+    public function saveLobbyGameIds(array $gameIds): void
+    {
+        Cache::put('lobby_game_ids', $gameIds, self::CACHE_TTL);
+        \Log::info("💾 Saved lobby game IDs: " . count($gameIds));
+    }
+
+    /**
+     * 🎯 Получить список ID игр для лобби
+     */
+    public function getLobbyGameIds(): array
+    {
+        $gameIds = Cache::get('lobby_game_ids', []);
+        \Log::info("📋 Retrieved lobby game IDs: " . count($gameIds));
+        return $gameIds;
+    }
+
 }

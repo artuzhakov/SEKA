@@ -26,6 +26,7 @@ use App\Events\GameFinished;
 use Illuminate\Support\Facades\Auth;
 use App\Domain\Game\ValueObjects\GameId;
 use App\Domain\Game\ValueObjects\PlayerId;
+use App\Domain\Game\Enums\GameMode;
 
 class GameController extends Controller
 {
@@ -987,7 +988,7 @@ class GameController extends Controller
     }
 
     /**
-     * 🎯 ПРИСОЕДИНИТЬСЯ К ИГРЕ (С ОБРАБОТКОЙ ДУБЛИРОВАНИЯ)
+     * 🎯 ПРИСОЕДИНИТЬСЯ К ИГРЕ (ИСПРАВЛЕННАЯ ВЕРСИЯ С РЕАЛЬНЫМИ ИМЕНАМИ)
      */
     public function joinGame(Request $request, int $gameId): JsonResponse
     {
@@ -1001,12 +1002,16 @@ class GameController extends Controller
                 ], 400);
             }
 
-            $playerName = $request->input('player_name') ?? "Player_{$userId}";
-            $game = $this->getGameById($gameId);
+            // 🎯 ПОЛУЧАЕМ РЕАЛЬНОЕ ИМЯ ПОЛЬЗОВАТЕЛЯ
+            $user = Auth::user();
+            $playerName = $user ? $user->name : ("Игрок_" . $userId);
 
+            $game = $this->getGameById($gameId);
+            
             \Log::info("🎮 Player joining game", [
                 'game_id' => $gameId,
                 'user_id' => $userId,
+                'player_name' => $playerName, // 🎯 Реальное имя
                 'current_status' => $game->getStatus()->value,
                 'current_players' => count($game->getPlayers())
             ]);
@@ -1020,7 +1025,7 @@ class GameController extends Controller
             
             // 🎯 ПРОБУЕМ ДОБАВИТЬ ИГРОКА
             try {
-                $player = $this->gameService->addPlayerToGame($game, $userId, $playerName);
+                $player = $this->gameService->addPlayerToGame($game, $userId, $playerName); // 🎯 Передаем реальное имя
                 \Log::info("🎯 New player added to game");
             } catch (\DomainException $e) {
                 // 🎯 ЕСЛИ ИГРОК УЖЕ В ИГРЕ - НАХОДИМ ЕГО
@@ -1058,7 +1063,7 @@ class GameController extends Controller
             // Форматируем данные для ответа
             $playerData = [
                 'id' => $userId,
-                'name' => $playerName,
+                'name' => $playerName, // 🎯 Реальное имя
                 'position' => $player->getPosition(),
                 'balance' => $player->getBalance(),
                 'is_ready' => $player->isReady(),
@@ -1071,19 +1076,10 @@ class GameController extends Controller
             \Log::info("🎮 Player successfully processed", [
                 'game_id' => $gameId,
                 'user_id' => $userId,
+                'player_name' => $playerName,
                 'player_position' => $player->getPosition(),
                 'players_count' => count($game->getPlayers())
             ]);
-
-            // Отправляем WebSocket событие (только для новых игроков)
-            if ($player->getPosition() > count($game->getPlayers()) - 1) { // Примерная проверка нового игрока
-                broadcast(new \App\Events\PlayerJoined(
-                    gameId: $gameId,
-                    player: $playerData,
-                    playersList: $playersList,
-                    currentPlayersCount: count($game->getPlayers())
-                ));
-            }
 
             return response()->json([
                 'success' => true,
@@ -1111,7 +1107,6 @@ class GameController extends Controller
             ], 400);
         }
     }
-
     /**
      * 🎯 ПОКИНУТЬ ИГРУ (новый метод)
      */
@@ -1226,6 +1221,7 @@ class GameController extends Controller
 
         $players = $game->getPlayers();
         $playerToRemove = null;
+        $playerIndex = null;
 
         // Находим игрока для удаления
         foreach ($players as $index => $player) {
@@ -1234,10 +1230,12 @@ class GameController extends Controller
             if (is_object($playerUserId) && method_exists($playerUserId, 'toInt')) {
                 if ($playerUserId->toInt() === $userId) {
                     $playerToRemove = $player;
+                    $playerIndex = $index;
                     break;
                 }
             } elseif ((int)$playerUserId === $userId) {
                 $playerToRemove = $player;
+                $playerIndex = $index;
                 break;
             }
         }
@@ -1246,7 +1244,7 @@ class GameController extends Controller
             throw new \DomainException('Player not found in game');
         }
 
-        // Удаляем игрока из игры
+        // 🎯 ИСПОЛЬЗУЕМ МЕТОД removePlayer ИГРЫ
         $game->removePlayer($playerToRemove);
 
         \Log::info("🎯 Player removed successfully", [
@@ -1687,18 +1685,38 @@ class GameController extends Controller
     }
 
     /**
-     * 🎯 ПОЛУЧИТЬ ИГРЫ ДЛЯ ЛОББИ (ИСПРАВЛЕННАЯ ВЕРСИЯ - ОБНОВЛЕНИЕ ВМЕСТО ПЕРЕСОЗДАНИЯ)
+     * 🎯 ПОЛУЧИТЬ ИГРЫ ДЛЯ ЛОББИ (ФИНАЛЬНАЯ ВЕРСИЯ - ИСПРАВЛЕННАЯ)
      */
     public function getLobbyGames(): JsonResponse
     {
         try {
             $repository = new \App\Domain\Game\Repositories\CachedGameRepository();
-            $allGames = $repository->findAll();
             
-            // 🎯 ДИАГНОСТИКА 1: Сколько всего игр в кэше
-            \Log::info("🔍 DIAGNOSTIC: Total games in cache", [
-                'all_games_count' => count($allGames),
-                'game_ids' => array_map(fn($game) => $game->getId()->toInt(), $allGames)
+            // 🎯 ПОЛУЧАЕМ СОХРАНЕННЫЕ ID ИГР ДЛЯ ЛОББИ
+            $lobbyGameIds = $repository->getLobbyGameIds();
+            
+            \Log::info("🔍 LOBBY DEBUG - Loaded from saved IDs:", [
+                'saved_ids_count' => count($lobbyGameIds),
+                'saved_ids' => $lobbyGameIds
+            ]);
+            
+            // 🎯 ЕСЛИ ПЕРВЫЙ ЗАПРОС - СОЗДАЕМ НОВЫЕ СТОЛЫ
+            if (empty($lobbyGameIds)) {
+                \Log::info("🎯 First request - creating initial tables");
+                return $this->createInitialLobbyTables();
+            }
+            
+            // 🎯 ЗАГРУЖАЕМ СУЩЕСТВУЮЩИЕ ИГРЫ
+            $allGames = [];
+            foreach ($lobbyGameIds as $gameId) {
+                $game = $repository->find(\App\Domain\Game\ValueObjects\GameId::fromInt($gameId));
+                if ($game && $game->getStatus() === \App\Domain\Game\Enums\GameStatus::WAITING) {
+                    $allGames[] = $game;
+                }
+            }
+            
+            \Log::info("🔍 LOBBY DEBUG - Games loaded:", [
+                'loaded_games_count' => count($allGames)
             ]);
             
             $tableTypes = [
@@ -1708,80 +1726,14 @@ class GameController extends Controller
                 'master' => ['base_bet' => 50, 'min_balance' => 500, 'name' => '🏆 Мастера']
             ];
             
-            $waitingGames = array_filter($allGames, function($game) {
-                return $game->getStatus() === \App\Domain\Game\Enums\GameStatus::WAITING;
-            });
-            
-            // 🎯 ДИАГНОСТИКА 2: Сколько ожидающих игр
-            \Log::info("🔍 DIAGNOSTIC: Waiting games", [
-                'waiting_games_count' => count($waitingGames),
-                'waiting_game_ids' => array_map(fn($game) => $game->getId()->toInt(), $waitingGames)
-            ]);
-            
-            $gamesByType = [];
-            foreach ($waitingGames as $game) {
-                $tableType = $this->determineTableType($game);
-                if (!isset($gamesByType[$tableType])) {
-                    $gamesByType[$tableType] = [];
-                }
-                $gamesByType[$tableType][] = $game;
-            }
-            
-            // 🎯 ДИАГНОСТИКА 3: Распределение по типам
-            \Log::info("🔍 DIAGNOSTIC: Games by type", [
-                'novice_count' => count($gamesByType['novice'] ?? []),
-                'amateur_count' => count($gamesByType['amateur'] ?? []),
-                'pro_count' => count($gamesByType['pro'] ?? []),
-                'master_count' => count($gamesByType['master'] ?? [])
-            ]);
-            
             $formattedGames = [];
-            foreach ($tableTypes as $type => $config) {
-                $typeGames = $gamesByType[$type] ?? [];
-                $currentCount = count($typeGames);
-                
-                \Log::info("🎯 Processing table type {$type}", [
-                    'current_tables' => $currentCount,
-                    'need_to_create' => max(0, 4 - $currentCount)
-                ]);
-                
-                for ($i = $currentCount; $i < 4; $i++) {
-                    $newGame = $this->createAutoTable($type, $config);
-                    $typeGames[] = $newGame;
-                    \Log::info("🆕 Created missing table", [
-                        'type' => $type,
-                        'game_id' => $newGame->getId()->toInt(),
-                        'table_number' => $i + 1
-                    ]);
-                }
-                
-                // 🎯 ИСПРАВЛЕНИЕ: Добавляем $index в цикл
-                foreach ($typeGames as $index => $game) {
-                    $players = $game->getPlayers();
-                    
-                    $formattedGames[] = [
-                        'id' => $game->getId()->toInt(),
-                        'name' => $config['name'] . " #" . ($index + 1), // 🎯 Теперь $index доступен
-                        'status' => $game->getStatus()->value,
-                        'table_type' => $type,
-                        'players_count' => count($players),
-                        'max_players' => 6,
-                        'base_bet' => $config['base_bet'],
-                        'min_balance' => $config['min_balance'],
-                        'created_at' => now()->toISOString(),
-                        'players' => array_map(function($player) {
-                            return [
-                                'id' => $player->getUserId(),
-                                'name' => "Игрок_" . $player->getUserId(),
-                                'is_ready' => $player->isReady(),
-                                'position' => $player->getPosition()
-                            ];
-                        }, $players)
-                    ];
-                }
+            foreach ($allGames as $game) {
+                $tableType = $this->determineTableTypeByGame($game);
+                $config = $tableTypes[$tableType] ?? $tableTypes['novice'];
+                $formattedGames[] = $this->formatGameForLobby($game, $tableType, $config);
             }
             
-            \Log::info("✅ FINAL RESULT", [
+            \Log::info("✅ FINAL RESULT - Existing lobby", [
                 'total_tables' => count($formattedGames),
                 'tables_by_type' => array_count_values(array_column($formattedGames, 'table_type'))
             ]);
@@ -1793,17 +1745,251 @@ class GameController extends Controller
             ]);
             
         } catch (\Exception $e) {
-            \Log::error("❌ Failed to get lobby games", [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
+            \Log::error("❌ Failed to get lobby games", ['error' => $e->getMessage()]);
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    // 🎯 ДОБАВИТЬ МЕТОД ДЛЯ СОЗДАНИЯ ПЕРВОНАЧАЛЬНЫХ СТОЛОВ
+    private function createInitialLobbyTables(): JsonResponse
+    {
+        $repository = new \App\Domain\Game\Repositories\CachedGameRepository();
+        $tableTypes = [
+            'novice' => ['base_bet' => 5, 'min_balance' => 50, 'name' => '🥉 Новички'],
+            'amateur' => ['base_bet' => 10, 'min_balance' => 100, 'name' => '🥈 Любители'],
+            'pro' => ['base_bet' => 25, 'min_balance' => 250, 'name' => '🥇 Профи'],
+            'master' => ['base_bet' => 50, 'min_balance' => 500, 'name' => '🏆 Мастера']
+        ];
+        
+        $formattedGames = [];
+        $newLobbyGameIds = [];
+        
+        foreach ($tableTypes as $type => $config) {
+            for ($i = 0; $i < 4; $i++) {
+                $gameId = $this->generateGameId();
+                
+                // 🎯 СОЗДАЕМ ПУСТУЮ ИГРУ
+                $game = new Game(
+                    \App\Domain\Game\ValueObjects\GameId::fromInt($gameId),
+                    \App\Domain\Game\Enums\GameStatus::WAITING,
+                    $gameId,
+                    \App\Domain\Game\Enums\GameMode::OPEN,
+                    $config['base_bet']  // 🎯 УСТАНАВЛИВАЕМ ПРАВИЛЬНУЮ СТАВКУ
+                );
+                
+                $repository->save($game);
+                $formattedGames[] = $this->formatGameForLobby($game, $type, $config, $i + 1);
+                $newLobbyGameIds[] = $gameId;
+                
+                \Log::info("🎯 Created table", [
+                    'type' => $type,
+                    'game_id' => $gameId,
+                    'base_bet' => $config['base_bet']
+                ]);
+            }
+        }
+        
+        // 🎯 СОХРАНЯЕМ ID ДЛЯ СЛЕДУЮЩИХ ЗАПРОСОВ
+        $repository->saveLobbyGameIds($newLobbyGameIds);
+        
+        \Log::info("✅ Initial lobby created", [
+            'total_tables' => count($formattedGames),
+            'saved_ids' => $newLobbyGameIds
+        ]);
+        
+        return response()->json([
+            'success' => true,
+            'games' => $formattedGames,
+            'total' => count($formattedGames)
+        ]);
+    }
+
+    /**
+     * 🎯 СОЗДАТЬ ПУСТОЙ СТОЛ (без игроков)
+     */
+    private function createEmptyTable(string $tableType, array $config): Game
+    {
+        $gameId = $this->generateGameId();
+        
+        // 🎯 ПРАВИЛЬНЫЕ ИМПОРТЫ
+        $game = new Game(
+            \App\Domain\Game\ValueObjects\GameId::fromInt($gameId),
+            \App\Domain\Game\Enums\GameStatus::WAITING, // ✅
+            $gameId,
+            \App\Domain\Game\Enums\GameMode::OPEN, // ✅
+            $config['base_bet']
+        );
+        
+        // 🎯 СОХРАНЯЕМ В КЭШ
+        $repository = new \App\Domain\Game\Repositories\CachedGameRepository();
+        $repository->save($game);
+        
+        \Log::info("🎯 Empty table created", [
+            'game_id' => $gameId,
+            'table_type' => $tableType,
+            'base_bet' => $config['base_bet']
+        ]);
+        
+        return $game;
+    }
+
+    /**
+     * 🎯 ОПРЕДЕЛИТЬ ТИП СТОЛА ПО ИГРЕ (ДИАГНОСТИКА)
+     */
+    private function determineTableTypeByGame(Game $game): string
+    {
+        // 🎯 ПОЛУЧАЕМ БАЗОВУЮ СТАВКУ РАЗНЫМИ СПОСОБАМИ
+        $baseBet = $game->getBaseBet();
+        
+        // 🎯 ЭКСТРЕМАЛЬНАЯ ДИАГНОСТИКА
+        \Log::info("🎯 EXTREME DEBUG - determineTableTypeByGame", [
+            'game_id' => $game->getId()->toInt(),
+            'base_bet_method' => $baseBet,
+            'base_bet_type' => gettype($baseBet),
+            'base_bet_exact' => var_export($baseBet, true),
+            'base_bet_equals_10' => $baseBet == 10 ? 'YES' : 'NO',
+            'base_bet_identical_10' => $baseBet === 10 ? 'YES' : 'NO',
+            'base_bet_intval' => intval($baseBet),
+            'game_class' => get_class($game),
+        ]);
+
+        // 🎯 ПРОВЕРЯЕМ ВСЕ ВОЗМОЖНЫЕ СЦЕНАРИИ
+        $result = 'novice'; // по умолчанию
+        
+        if ($baseBet == 5) {
+            $result = 'novice';
+            \Log::info("✅ CASE: baseBet 5 -> novice");
+        } 
+        elseif ($baseBet == 10) {
+            $result = 'amateur';
+            \Log::info("✅ CASE: baseBet 10 -> amateur");
+        }
+        elseif ($baseBet == 25) {
+            $result = 'pro';
+            \Log::info("✅ CASE: baseBet 25 -> pro");
+        }
+        elseif ($baseBet == 50) {
+            $result = 'master';
+            \Log::info("✅ CASE: baseBet 50 -> master");
+        }
+        else {
+            \Log::warning("⚠️ DEFAULT CASE: baseBet {$baseBet} -> novice");
+        }
+
+        \Log::info("🎯 FINAL DECISION", [
+            'input_base_bet' => $baseBet,
+            'output_type' => $result,
+            'success' => $result === 'amateur' ? 'YES' : 'NO'
+        ]);
+
+        return $result;
+    }
+
+    // 🎯 ДОБАВЬТЕ ВСПОМОГАТЕЛЬНЫЙ МЕТОД ДЛЯ БАЗОВОЙ СТАВКИ:
+    private function determineTableTypeByBaseBet(int $baseBet): string
+    {
+        \Log::info("🔍 Determining table type by base bet", ['base_bet' => $baseBet]);
+        
+        $result = match($baseBet) {
+            5 => 'novice',
+            10 => 'amateur', 
+            25 => 'pro',
+            50 => 'master',
+            default => 'novice'
+        };
+        
+        \Log::info("🔍 Table type by base bet result", ['base_bet' => $baseBet, 'result' => $result]);
+        return $result;
+    }
+
+    /**
+     * 🎯 ТЕСТ ГЕНЕРАЦИИ ID ИГРЫ С ДИАГНОСТИКОЙ КЭША
+     */
+    public function testGameIdGeneration(): JsonResponse
+    {
+        try {
+            $repository = new \App\Domain\Game\Repositories\CachedGameRepository();
+            
+            // 🎯 ПРОВЕРЯЕМ КЭШ ДО ГЕНЕРАЦИИ
+            $testGameId = 12345;
+            $gameBefore = $repository->find(\App\Domain\Game\ValueObjects\GameId::fromInt($testGameId));
+            
+            // 🎯 СОЗДАЕМ И СОХРАНЯЕМ ТЕСТОВУЮ ИГРУ
+            $testGame = new Game(
+                \App\Domain\Game\ValueObjects\GameId::fromInt($testGameId),
+                \App\Domain\Game\Enums\GameStatus::WAITING,
+                $testGameId,
+                \App\Domain\Game\Enums\GameMode::OPEN,
+                5
+            );
+            
+            $repository->save($testGame);
+            
+            // 🎯 ПРОВЕРЯЕМ КЭШ ПОСЛЕ СОХРАНЕНИЯ
+            $gameAfter = $repository->find(\App\Domain\Game\ValueObjects\GameId::fromInt($testGameId));
+            
+            // 🎯 ГЕНЕРИРУЕМ НОВЫЕ ID
+            $testIds = [];
+            for ($i = 0; $i < 3; $i++) {
+                $testIds[] = $this->generateGameId();
+            }
             
             return response()->json([
+                'success' => true,
+                'cache_test' => [
+                    'game_before_save' => $gameBefore ? 'FOUND' : 'NOT_FOUND',
+                    'game_after_save' => $gameAfter ? 'FOUND' : 'NOT_FOUND',
+                    'test_game_id' => $testGameId
+                ],
+                'generated_ids' => $testIds,
+                'message' => 'Cache diagnostic completed'
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json([
                 'success' => false,
-                'message' => 'Failed to load lobby games',
-                'error' => $e->getMessage()
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ], 500);
         }
+    }
+
+    /**
+     * 🎯 ФОРМАТИРОВАТЬ ИГРУ ДЛЯ ЛОББИ (ИСПРАВЛЕННАЯ ВЕРСИЯ)
+     */
+    private function formatGameForLobby(Game $game, string $tableType, array $config, int $tableNumber = null): array
+    {
+        $players = $game->getPlayers();
+        $gameId = $game->getId()->toInt();
+        
+        // 🎯 ФОРМАТИРУЕМ ИГРОКОВ С РЕАЛЬНЫМИ ДАННЫМИ
+        $formattedPlayers = [];
+        foreach ($players as $player) {
+            $playerUserId = $player->getUserId();
+            $userId = is_object($playerUserId) && method_exists($playerUserId, 'toInt') 
+                ? $playerUserId->toInt() 
+                : (int)$playerUserId;
+                
+            $formattedPlayers[] = [
+                'id' => $userId,
+                'name' => "Игрок_" . $userId, // 🎯 Временное решение
+                'is_ready' => $player->isReady(),
+                'position' => $player->getPosition()
+            ];
+        }
+        
+        return [
+            'id' => $gameId,
+            'name' => $config['name'] . " #" . ($tableNumber ?? $gameId),
+            'status' => $game->getStatus()->value,
+            'table_type' => $tableType,
+            'players_count' => count($players), // 🎯 Реальное количество игроков
+            'max_players' => 6,
+            'base_bet' => $config['base_bet'],
+            'min_balance' => $config['min_balance'],
+            'created_at' => now()->toISOString(),
+            'players' => $formattedPlayers // 🎯 Добавляем информацию об игроках
+        ];
     }
 
     /**
@@ -1820,19 +2006,22 @@ class GameController extends Controller
 
             $userId = (int)$validated['user_id'];
             $tableType = $validated['table_type'] ?? 'novice';
-            $playerName = $validated['player_name'] ?? "Player_{$userId}";
 
-            // Создаем игру с игроком
+            // 🎯 ИСПОЛЬЗУЕМ СУЩЕСТВУЮЩИЙ МЕТОД GameService
             $game = $this->gameService->createNewGameWithPlayer($userId, $tableType);
             
             // Сохраняем игру
             $repository = new \App\Domain\Game\Repositories\CachedGameRepository();
             $repository->save($game);
 
+            // 🎯 ПОЛУЧАЕМ РЕАЛЬНУЮ БАЗОВУЮ СТАВКУ ИЗ КОНФИГА GameService
+            $tableConfig = $this->gameService->getTableConfig($tableType);
+
             \Log::info("🎯 New game created via API", [
                 'game_id' => $game->getId()->toInt(),
                 'user_id' => $userId,
-                'table_type' => $tableType
+                'table_type' => $tableType,
+                'base_bet' => $tableConfig['base_bet']
             ]);
 
             return response()->json([
@@ -1843,8 +2032,8 @@ class GameController extends Controller
                     'name' => "Стол #" . $game->getId()->toInt(),
                     'status' => $game->getStatus()->value,
                     'table_type' => $tableType,
-                    'base_bet' => $this->getTableConfig($tableType)['base_bet'],
-                    'min_balance' => $this->getTableConfig($tableType)['min_balance'],
+                    'base_bet' => $tableConfig['base_bet'],
+                    'min_balance' => $tableConfig['min_balance'],
                     'players_count' => 1,
                     'max_players' => 6
                 ]
@@ -1860,20 +2049,6 @@ class GameController extends Controller
                 'message' => 'Failed to create game: ' . $e->getMessage()
             ], 500);
         }
-    }
-
-    /**
-     * 🎯 КОНФИГУРАЦИЯ СТОЛОВ
-     */
-    private function getTableConfig(string $tableType): array
-    {
-        return match($tableType) {
-            'novice' => ['base_bet' => 5, 'min_balance' => 50, 'name' => 'Новички'],
-            'amateur' => ['base_bet' => 10, 'min_balance' => 100, 'name' => 'Любители'],
-            'pro' => ['base_bet' => 25, 'min_balance' => 250, 'name' => 'Профи'],
-            'master' => ['base_bet' => 50, 'min_balance' => 500, 'name' => 'Мастера'],
-            default => ['base_bet' => 5, 'min_balance' => 50, 'name' => 'Новички']
-        };
     }
 
     /**
@@ -1912,53 +2087,50 @@ class GameController extends Controller
     }
 
     /**
-     * 🎯 СУПЕР-НАДЕЖНАЯ ГЕНЕРАЦИЯ ID С ГАРАНТИЕЙ УНИКАЛЬНОСТИ
+     * 🎯 ГЕНЕРАЦИЯ ID ИГРЫ (исправленная версия)
      */
     private function generateGameId(): int
     {
         $repository = new \App\Domain\Game\Repositories\CachedGameRepository();
-        $maxAttempts = 5; // На всякий случай ограничим попытки
         
-        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
-            $timestamp = (int) (microtime(true) * 1000); // 13 цифр
-            $random = random_int(10000, 99999); // 5 цифр случайности
-            $gameId = (int) ($timestamp . $random); // 18 цифр total
+        // 🎯 ПРОСТАЯ ГЕНЕРАЦИЯ 6-ЗНАЧНЫХ ID
+        for ($attempt = 1; $attempt <= 5; $attempt++) {
+            $gameId = random_int(100000, 999999); // 6 цифр
             
-            // 🎯 ПРОВЕРЯЕМ УНИКАЛЬНОСТЬ
-            if (!$repository->find(\App\Domain\Game\ValueObjects\GameId::fromInt($gameId))) {
-                \Log::info("✅ Generated unique game ID: {$gameId} (attempt: {$attempt})");
+            // Проверяем существование игры
+            $existingGame = $repository->find(\App\Domain\Game\ValueObjects\GameId::fromInt($gameId));
+            if (!$existingGame) {
+                \Log::info("✅ Generated unique game ID: {$gameId}");
                 return $gameId;
             }
             
-            \Log::warning("⚠️ Game ID collision detected: {$gameId}, attempt: {$attempt}");
-            
-            // 🎯 ДОБАВЛЯЕМ ДОПОЛНИТЕЛЬНУЮ СЛУЧАЙНОСТЬ ПРИ КОЛЛИЗИИ
-            if ($attempt < $maxAttempts) {
-                $gameId += random_int(1, 1000); // Сдвигаем ID
-                usleep(1000 * $attempt); // Увеличиваем задержку с каждой попыткой
-            }
+            \Log::warning("⚠️ Game ID collision: {$gameId}, attempt: {$attempt}");
+            usleep(10000); // 10ms
         }
         
-        // 🎯 КРИТИЧЕСКАЯ РЕЗЕРВНАЯ СИСТЕМА (крайне маловероятно)
-        $criticalId = (int) (time() . random_int(100000000, 999999999));
-        \Log::error("🚨 CRITICAL: Using emergency game ID: {$criticalId}");
-        
-        return $criticalId;
+        // 🎯 РЕЗЕРВНЫЙ ВАРИАНТ - используем timestamp
+        $emergencyId = (int) (microtime(true) * 1000) % 1000000;
+        \Log::warning("🚨 Using timestamp-based game ID: {$emergencyId}");
+        return $emergencyId;
     }
 
     /**
-     * 🎯 АВТОМАТИЧЕСКИ СОЗДАТЬ СТОЛ
+     * 🎯 АВТОМАТИЧЕСКИ СОЗДАТЬ СТОЛ (используем существующий функционал)
      */
     private function createAutoTable(string $tableType, array $config): Game
     {
         $gameId = $this->generateGameId();
         
-        $dto = new \App\Application\DTO\StartGameDTO(
-            roomId: $gameId,
-            playerIds: [] // Пустой - игроки присоединятся позже
-        );
+        // 🎯 ИСПОЛЬЗУЕМ СУЩЕСТВУЮЩИЙ МЕТОД GameService
+        // Создаем игру с "системным" пользователем ID 0
+        $game = $this->gameService->createNewGameWithPlayer(0, $tableType);
         
-        $game = $this->gameService->startNewGame($dto);
+        // 🎯 УДАЛЯЕМ СИСТЕМНОГО ИГРОКА (если нужно пустой стол)
+        try {
+            $this->gameService->removePlayerFromGame($game, 0);
+        } catch (\Exception $e) {
+            // Игрок может не существовать - это нормально
+        }
         
         // 🎯 СОХРАНЯЕМ В КЭШ
         $repository = new \App\Domain\Game\Repositories\CachedGameRepository();
@@ -1967,6 +2139,7 @@ class GameController extends Controller
         \Log::info("🎯 Auto-created table", [
             'game_id' => $gameId,
             'table_type' => $tableType,
+            'base_bet' => $config['base_bet'],
             'players_count' => count($game->getPlayers())
         ]);
         
@@ -1974,13 +2147,281 @@ class GameController extends Controller
     }
 
     /**
-     * 🎯 ОПРЕДЕЛИТЬ ТИП СТОЛА ПО ИГРЕ (ПРОСТАЯ ВЕРСИЯ)
+     * 🎯 ОПРЕДЕЛИТЬ ТИП СТОЛА ПО БАЗОВОЙ СТАВКЕ (ПРАВИЛЬНАЯ ВЕРСИЯ)
      */
     private function determineTableType(Game $game): string
     {
-        $gameId = $game->getId()->toInt();
-        $types = ['novice', 'amateur', 'pro', 'master'];
-        return $types[$gameId % 4];
+        // 🎯 Используем реальную базовую ставку из игры
+        $baseBet = $game->getBaseBet(); // Добавьте этот метод в Game entity если его нет
+        
+        return match($baseBet) {
+            5 => 'novice',
+            10 => 'amateur', 
+            25 => 'pro',
+            50 => 'master',
+            default => 'novice'
+        };
+    }
+
+    /**
+     * 🎯 Получить список всех игр для лобби
+     */
+    public function listGames(Request $request)
+    {
+        try {
+            $games = Game::with(['players' => function($query) {
+                    $query->where('status', 'active')
+                        ->with('user:id,name');
+                }])
+                ->whereIn('status', ['waiting', 'active'])
+                ->orderBy('created_at', 'desc')
+                ->get()
+                ->map(function($game) {
+                    $activePlayers = $game->players->where('status', 'active');
+                    
+                    return [
+                        'id' => $game->id,
+                        'name' => "Стол #{$game->id}",
+                        'table_type' => $this->getTableTypeByBet($game->base_bet),
+                        'players_count' => $activePlayers->count(),
+                        'base_bet' => $game->base_bet,
+                        'status' => $game->status,
+                        'players' => $activePlayers->map(function($player) {
+                            return [
+                                'id' => $player->user_id,
+                                'position' => $player->position,
+                                'name' => $player->user->name ?? 'Игрок',
+                                'is_ready' => $player->is_ready,
+                                'status' => $player->status
+                            ];
+                        })->values(),
+                        'created_at' => $game->created_at,
+                        'updated_at' => $game->updated_at
+                    ];
+                });
+
+            return response()->json([
+                'success' => true,
+                'games' => $games,
+                'total' => $games->count()
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('Error fetching games list: ' . $e->getMessage());
+            
+            return response()->json([
+                'success' => false,
+                'error' => 'Не удалось загрузить список игр',
+                'games' => []
+            ], 500);
+        }
+    }
+
+    /**
+     * 🎯 Получить игроков для конкретной игры
+     */
+    private function getGamePlayers($gameId)
+    {
+        try {
+            $players = \App\Models\Player::where('game_id', $gameId)
+                ->with('user:id,name')
+                ->get()
+                ->map(function($player) {
+                    return [
+                        'id' => $player->user_id,
+                        'position' => $player->position,
+                        'name' => $player->user->name ?? 'Игрок',
+                        'is_ready' => $player->is_ready,
+                        'status' => $player->status
+                    ];
+                });
+
+            return $players;
+
+        } catch (\Exception $e) {
+            \Log::error('Error fetching game players: ' . $e->getMessage());
+            return [];
+        }
+    }
+
+    /**
+     * 🎯 Определить тип стола по базовой ставке
+     */
+    private function getTableTypeByBet($baseBet)
+    {
+        return match($baseBet) {
+            5 => 'novice',
+            10 => 'amateur', 
+            25 => 'pro',
+            50 => 'master',
+            default => 'novice'
+        };
+    }
+
+    /**
+     * 🎯 ПОКИНУТЬ ИГРУ И ВЕРНУТЬСЯ В ЛОББИ (ПОЛНАЯ ВЕРСИЯ)
+     */
+    public function leaveToLobby(Request $request, int $gameId): JsonResponse
+    {
+        try {
+            $userId = $request->input('user_id') ?? Auth::id();
+            
+            if (!$userId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User ID is required'
+                ], 400);
+            }
+
+            $game = $this->getGameById($gameId);
+            
+            \Log::info("🎮 Player leaving to lobby", [
+                'game_id' => $gameId,
+                'user_id' => $userId,
+                'current_players' => count($game->getPlayers()),
+                'current_status' => $game->getStatus()->value
+            ]);
+
+            // 🎯 УДАЛЯЕМ ИГРОКА ЧЕРЕЗ GameService
+            $this->gameService->removePlayerFromGame($game, $userId);
+
+            $remainingPlayers = count($game->getPlayers());
+            
+            // 🎯 ИСПРАВЛЕНИЕ: НЕ ЗАКРЫВАЕМ ИГРУ, ОСТАВЛЯЕМ В ЛОББИ
+            // Игра остается в статусе WAITING даже если игроков нет
+            // Это позволяет новым игрокам присоединяться
+            
+            \Log::info("🎮 After player removal", [
+                'game_id' => $gameId,
+                'remaining_players' => $remainingPlayers,
+                'game_status' => $game->getStatus()->value
+            ]);
+
+            // 🎯 СОХРАНЯЕМ ОБНОВЛЕННУЮ ИГРУ
+            $repository = new \App\Domain\Game\Repositories\CachedGameRepository();
+            $repository->save($game);
+
+            // 🎯 ОБНОВЛЯЕМ СПИСОК ИГР В ЛОББИ
+            $this->updateLobbyGameIds($gameId);
+
+            \Log::info("🎮 Player successfully left to lobby", [
+                'game_id' => $gameId,
+                'user_id' => $userId,
+                'remaining_players' => $remainingPlayers,
+                'game_status' => $game->getStatus()->value
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Successfully left the game',
+                'redirect_to' => '/lobby',
+                'game_status' => $game->getStatus()->value,
+                'remaining_players' => $remainingPlayers
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error("❌ Failed to leave game to lobby", [
+                'game_id' => $gameId,
+                'user_id' => $userId ?? 'unknown',
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to leave game: ' . $e->getMessage()
+            ], 400);
+        }
+    }
+
+    // 🎯 ДОБАВИТЬ МЕТОД ДЛЯ ОБНОВЛЕНИЯ ЛОББИ
+    private function updateLobbyGameIds(int $gameId): void
+    {
+        $repository = new \App\Domain\Game\Repositories\CachedGameRepository();
+        $lobbyGameIds = $repository->getLobbyGameIds();
+        
+        // 🎯 ЕСЛИ ИГРЫ ЕЩЁ НЕТ В ЛОББИ - ДОБАВЛЯЕМ
+        if (!in_array($gameId, $lobbyGameIds)) {
+            $lobbyGameIds[] = $gameId;
+            $repository->saveLobbyGameIds($lobbyGameIds);
+            \Log::info("🎯 Added game to lobby", ['game_id' => $gameId]);
+        }
+    }
+
+    /**
+     * 🎯 ОЧИСТИТЬ ЛОББИ (для админа или тестирования)
+     */
+    public function clearLobby(): JsonResponse
+    {
+        try {
+            $repository = new \App\Domain\Game\Repositories\CachedGameRepository();
+            $repository->saveLobbyGameIds([]);
+            
+            \Log::info("🧹 Lobby cleared");
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Lobby cleared successfully'
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * 🎯 ОЧИСТИТЬ ЛИШНИЕ СТОЛЫ (для исправления текущей ситуации)
+     */
+    public function cleanupLobby(): JsonResponse
+    {
+        try {
+            $repository = new \App\Domain\Game\Repositories\CachedGameRepository();
+            
+            // Получаем все игры
+            $allGames = $repository->findAll();
+            
+            // Группируем по типу
+            $gamesByType = [];
+            foreach ($allGames as $game) {
+                $tableType = $this->determineTableTypeByGame($game);
+                if (!isset($gamesByType[$tableType])) {
+                    $gamesByType[$tableType] = [];
+                }
+                $gamesByType[$tableType][] = $game;
+            }
+            
+            // Оставляем только по 4 стола каждого типа
+            $gamesToKeep = [];
+            foreach ($gamesByType as $type => $games) {
+                $gamesToKeep = array_merge($gamesToKeep, array_slice($games, 0, 4));
+            }
+            
+            // Сохраняем только нужные ID
+            $gameIdsToKeep = array_map(function($game) {
+                return $game->getId()->toInt();
+            }, $gamesToKeep);
+            
+            $repository->saveLobbyGameIds($gameIdsToKeep);
+            
+            \Log::info("🧹 Cleaned up lobby", [
+                'kept_games' => count($gamesToKeep),
+                'game_ids' => $gameIdsToKeep
+            ]);
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Lobby cleaned up successfully',
+                'kept_games' => count($gamesToKeep)
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage()
+            ], 500);
+        }
     }
     
 }

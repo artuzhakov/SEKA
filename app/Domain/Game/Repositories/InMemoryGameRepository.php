@@ -10,7 +10,7 @@ use App\Domain\Game\Enums\PlayerStatus;
 use App\Domain\Game\Enums\GameStatus;
 use App\Domain\Game\Enums\GameMode;
 
-class InMemoryGameRepository
+class InMemoryGameRepository implements GameRepositoryInterface  // 🎯 ДОБАВЛЯЕМ IMPLEMENTS
 {
     private static $instance = null;
     private $games = [];
@@ -46,6 +46,31 @@ class InMemoryGameRepository
         \Log::info("Saved game {$id} to repository");
     }
 
+    public function clear(): void
+    {
+        $this->games = [];
+        \Log::info("Repository cleared");
+    }
+
+    // 🎯 ДОБАВЛЯЕМ ОСТАВШИЕСЯ МЕТОДЫ ИЗ ИНТЕРФЕЙСА
+    public function findById(int $gameId): ?Game
+    {
+        return $this->find(GameId::fromInt($gameId));
+    }
+
+    public function delete(int $gameId): void
+    {
+        unset($this->games[$gameId]);
+        \Log::info("Deleted game {$gameId} from repository");
+    }
+
+    public function findActiveGames(): array
+    {
+        return array_values(array_filter($this->games, function(Game $game) {
+            return in_array($game->getStatus(), [GameStatus::WAITING, GameStatus::ACTIVE]);
+        }));
+    }
+
     private function createNewGame(int $gameId): Game
     {
         $game = new Game(
@@ -69,12 +94,6 @@ class InMemoryGameRepository
         $playersProperty->setValue($game, $players);
 
         return $game;
-    }
-
-    public function clear(): void
-    {
-        $this->games = [];
-        \Log::info("Repository cleared");
     }
 
     // 🎯 Запрещаем клонирование

@@ -1,7 +1,7 @@
 <!-- resources/js/Pages/SekaLobby.vue -->
 <template>
   <div class="lobby-container">
-    <!-- Header -->
+    <!-- Header (без изменений) -->
     <div class="lobby-header">
       <div class="header-content">
         <div class="header-left">
@@ -39,8 +39,25 @@
 
     <!-- Main Content -->
     <div class="lobby-content">
-      <!-- Tables by Type with Horizontal Scroll -->
-      <div class="table-type-section" v-for="tableType in tableTypes" :key="tableType.id">
+      <!-- Loading State -->
+      <div v-if="isLoading" class="loading-state">
+        <div class="loading-spinner">🎴</div>
+        <p>Загрузка столов...</p>
+      </div>
+
+      <!-- Error State -->
+      <div v-else-if="error" class="error-state">
+        <div class="error-message">
+          <h3>❌ Ошибка загрузки</h3>
+          <p>{{ error }}</p>
+          <button @click="loadTables" class="retry-btn">
+            🔄 Попробовать снова
+          </button>
+        </div>
+      </div>
+
+      <!-- Tables by Type -->
+      <div v-else class="table-type-section" v-for="tableType in tableTypes" :key="tableType.id">
         <div class="section-header">
           <div class="type-info">
             <span class="type-icon">{{ tableType.icon }}</span>
@@ -64,7 +81,7 @@
               :key="table.id"
             >
               <div class="table-header">
-                <h3 class="table-name">{{ table.name }}</h3>
+                <h3 class="table-name">{{ table.name || `Стол #${table.id}` }}</h3>
                 <div class="players-count">{{ table.players_count }}/6</div>
               </div>
               
@@ -97,6 +114,21 @@
                 {{ getJoinButtonText(table) }}
               </button>
             </div>
+
+            <!-- Empty State for Table Type -->
+            <div v-if="getTablesByType(tableType.id).length === 0" class="empty-table-card">
+              <div class="empty-table-content">
+                <span class="empty-icon">🎴</span>
+                <p class="empty-text">Нет столов</p>
+                <button 
+                  v-if="user.isAdmin" 
+                  @click="createTableOfType(tableType.id)"
+                  class="create-empty-btn"
+                >
+                  Создать стол
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -122,6 +154,7 @@
             <button
               @click="createNewTable"
               class="create-btn"
+              :disabled="isLoading"
             >
               🎯 Создать стол
             </button>
@@ -135,6 +168,7 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { Link, router } from '@inertiajs/vue3'
+import { useLobby } from '../components/seka/composables/useLobby' // 🎯 ИМПОРТИРУЕМ КОМПОЗЕЙБЛ
 
 const props = defineProps({
   user: Object,
@@ -142,7 +176,15 @@ const props = defineProps({
   errors: Object
 })
 
-// 🎯 ДОБАВЛЯЕМ tableTypes КОТОРАЯ ИСПОЛЬЗУЕТСЯ В ШАБЛОНЕ
+// 🎯 ИСПОЛЬЗУЕМ КОМПОЗЕЙБЛ
+const { 
+  tables: gameTables, 
+  isLoading, 
+  error, 
+  loadTables 
+} = useLobby()
+
+// Table types configuration
 const tableTypes = ref([
   { id: 'novice', name: 'НОВИЧКИ', icon: '🥉', bet: 5, minBalance: 50 },
   { id: 'amateur', name: 'ЛЮБИТЕЛИ', icon: '🥈', bet: 10, minBalance: 100 },
@@ -150,79 +192,58 @@ const tableTypes = ref([
   { id: 'master', name: 'МАСТЕРА', icon: '🏆', bet: 50, minBalance: 500 }
 ])
 
-// Configuration for table types - ТВОЯ КОНФИГУРАЦИЯ
-const TABLE_TYPES = {
-  novice: { minBet: 5, maxBet: 25, buyIn: 5, name: "Новички", color: "green" },
-  amateur: { minBet: 10, maxBet: 100, buyIn: 10, name: "Любители", color: "blue" },
-  pro: { minBet: 25, maxBet: 250, buyIn: 25, name: "Профи", color: "purple" },
-  master: { minBet: 50, maxBet: 500, buyIn: 50, name: "Мастера", color: "gold" }
-}
-
-// State - ТВОИ ПЕРЕМЕННЫЕ
-const gameTables = ref([])
+// State
 const newTableType = ref('novice')
-const newTablePlayers = ref(6)
 
-// Computed - ТВОИ ВЫЧИСЛЯЕМЫЕ СВОЙСТВА
+// Computed
 const totalPlayers = computed(() => {
-  return gameTables.value.reduce((sum, table) => sum + table.players_count, 0)
+  return gameTables.value.reduce((sum, table) => sum + (table.players_count || 0), 0)
 })
 
 const availableTablesCount = computed(() => {
-  return gameTables.value.filter(table => table.players_count < 6).length
+  return gameTables.value.filter(table => (table.players_count || 0) < 6).length
 })
 
-// 🎯 ПОЛУЧИТЬ СТОЛЫ ПО ТИПУ ДЛЯ ГОРИЗОНТАЛЬНЫХ РЯДОВ
+// Methods
 const getTablesByType = (type) => {
   return gameTables.value.filter(table => table.table_type === type)
 }
 
-// 🎯 ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ДЛЯ ИНТЕРФЕЙСА
 const isUserAtTable = (table) => {
-  // Здесь можно добавить логику проверки пользователя
-  // Например: проверить есть ли текущий пользователь в списке игроков стола
-  return false
+  return false // 🎯 МОЖНО ДОБАВИТЬ ЛОГИКУ ПРОВЕРКИ ПОЛЬЗОВАТЕЛЯ
 }
 
 const getJoinButtonText = (table) => {
+  const playersCount = table.players_count || 0
   if (isUserAtTable(table)) return 'ВОЙТИ'
-  if (table.players_count >= 6) return 'ПОЛНЫЙ'
-  if (table.players_count >= 5) return 'ПОЧТИ ПОЛНЫЙ'
+  if (playersCount >= 6) return 'ПОЛНЫЙ'
+  if (playersCount >= 5) return 'ПОЧТИ ПОЛНЫЙ'
   return 'ПРИСОЕДИНИТЬСЯ'
 }
 
-// 🎯 УЛУЧШЕННАЯ ФУНКЦИЯ ДЛЯ CSRF
 const getCsrfToken = () => {
-  // Пробуем разные способы найти CSRF токен
-  const token = document.querySelector('meta[name="csrf-token"]')?.content || 
-                document.querySelector('input[name="_token"]')?.value
-  return token
+  return document.querySelector('meta[name="csrf-token"]')?.content
 }
 
-// 🎯 ИСПРАВЛЕННЫЙ МЕТОД ПРИСОЕДИНЕНИЯ
 const handleJoinTable = async (table) => {
-  const tableId = table.id
-  
-  if (table.players_count >= 6) return
+  const playersCount = table.players_count || 0
+  if (playersCount >= 6) return
 
   try {
-    console.log('🎯 Joining table:', tableId)
+    console.log('🎯 Joining table:', table.id)
     
     const csrfToken = getCsrfToken()
-    console.log('🔐 CSRF Token:', csrfToken ? 'Found' : 'Not found')
-    
     const headers = {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
       'X-Requested-With': 'XMLHttpRequest'
     }
     
-    // Добавляем CSRF токен если нашли
     if (csrfToken) {
       headers['X-CSRF-TOKEN'] = csrfToken
     }
     
-    const response = await fetch(`/api/seka/games/${tableId}/join`, {
+    const response = await fetch(`/api/seka/games/${table.id}/join`, {
       method: 'POST',
       headers: headers,
       body: JSON.stringify({
@@ -231,31 +252,33 @@ const handleJoinTable = async (table) => {
       })
     })
 
-    console.log('🎯 Response status:', response.status)
-    
     if (response.ok) {
       const data = await response.json()
-      console.log('✅ Join successful:', data)
+      console.log('✅ Join successful - FULL RESPONSE:', data)
       
-      // Редирект на игровую комнату
-      window.location.href = `/game/${tableId}`
+      // 🎯 ПРОВЕРЯЕМ СТРУКТУРУ ОТВЕТА
+      const gameId = data.game_id || data.id || data.game?.id
+      console.log('🎯 Extracted Game ID:', gameId)
+      
+      if (gameId) {
+        window.location.href = `/game/${gameId}`
+      } else {
+        console.error('❌ No game ID in response:', data)
+        alert('Ошибка: не получен ID игры')
+      }
     } else {
       const errorText = await response.text()
       console.error('❌ Join failed:', response.status, errorText)
       
       try {
         const errorData = JSON.parse(errorText)
-        
-        if (errorData.message?.includes('already joined') || 
-            errorData.message?.includes('уже присоединился')) {
-          console.log('ℹ️ Player already in game, redirecting...')
-          window.location.href = `/game/${tableId}`
+        if (errorData.message?.includes('already joined')) {
+          window.location.href = `/game/${table.id}`
           return
         }
-        
         alert(`Ошибка: ${errorData.message || 'Не удалось присоединиться'}`)
       } catch {
-        alert(`Ошибка сервера: ${response.status}. Проверьте консоль для деталей.`)
+        alert(`Ошибка сервера: ${response.status}`)
       }
     }
   } catch (error) {
@@ -264,14 +287,9 @@ const handleJoinTable = async (table) => {
   }
 }
 
-// 🎯 ИСПРАВЛЕННЫЙ МЕТОД СОЗДАНИЯ СТОЛА
 const createNewTable = async () => {
   try {
-    console.log('🎯 Creating new table...')
-    
     const csrfToken = getCsrfToken()
-    console.log('🔐 CSRF Token:', csrfToken ? 'Found' : 'Not found')
-    
     const headers = {
       'Content-Type': 'application/json',
       'Accept': 'application/json', 
@@ -292,12 +310,8 @@ const createNewTable = async () => {
       })
     })
 
-    console.log('🎯 Create response status:', response.status)
-    
     if (response.ok) {
       const gameData = await response.json()
-      console.log('✅ Create successful:', gameData)
-      
       const gameId = gameData.game?.id || gameData.id
       if (gameId) {
         window.location.href = `/game/${gameId}`
@@ -307,13 +321,7 @@ const createNewTable = async () => {
     } else {
       const errorText = await response.text()
       console.error('❌ Create failed:', response.status, errorText)
-      
-      try {
-        const errorData = JSON.parse(errorText)
-        alert(`Ошибка: ${errorData.message || 'Не удалось создать стол'}`)
-      } catch {
-        alert(`Ошибка сервера: ${response.status}`)
-      }
+      alert(`Ошибка создания стола: ${response.status}`)
     }
   } catch (error) {
     console.error('❌ Create table error:', error)
@@ -321,54 +329,16 @@ const createNewTable = async () => {
   }
 }
 
-// 🎯 ИСПРАВЛЕННЫЙ МЕТОД ЗАГРУЗКИ ИГР
-const loadRealGames = async () => {
-  try {
-    console.log('🎯 Loading real games from API...')
-    const response = await fetch('/api/seka/lobby', {
-      headers: {
-        'Accept': 'application/json'
-      }
-    })
-    
-    if (response.ok) {
-      const data = await response.json()
-      console.log('✅ Real games loaded:', data)
-      
-      if (data.success && data.games) {
-        gameTables.value = data.games
-      }
-    } else {
-      console.warn('⚠️ Could not load real games, using mock data')
-      initializeMockTables()
-    }
-  } catch (error) {
-    console.error('❌ Error loading real games:', error)
-    initializeMockTables()
-  }
-}
-
-// 🎯 Fallback на мок данные
-const initializeMockTables = () => {
-  gameTables.value = [
-    { id: 1, name: 'Стол #1', table_type: 'novice', players_count: 2, base_bet: 5 },
-    { id: 2, name: 'Стол #2', table_type: 'novice', players_count: 0, base_bet: 5 },
-    { id: 3, name: 'Стол #3', table_type: 'amateur', players_count: 1, base_bet: 10 },
-    { id: 4, name: 'Стол #4', table_type: 'amateur', players_count: 5, base_bet: 10 },
-    { id: 5, name: 'Стол #5', table_type: 'pro', players_count: 3, base_bet: 25 },
-    { id: 6, name: 'Стол #6', table_type: 'pro', players_count: 0, base_bet: 25 },
-    { id: 7, name: 'Стол #7', table_type: 'master', players_count: 4, base_bet: 50 },
-    { id: 8, name: 'Стол #8', table_type: 'master', players_count: 1, base_bet: 50 },
-  ]
+const createTableOfType = (type) => {
+  newTableType.value = type
+  createNewTable()
 }
 
 const logout = () => {
   router.post('/logout')
 }
 
-onMounted(() => {
-  loadRealGames()
-})
+// 🎯 onMounted УЖЕ В КОМПОЗЕЙБЛЕ - НИЧЕГО НЕ ДЕЛАЕМ
 </script>
 
 <style scoped>
@@ -765,6 +735,101 @@ onMounted(() => {
 
 .tables-scroll-container::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.5);
+}
+
+/* Добавляем стили для состояний загрузки и ошибок */
+.loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  color: white;
+}
+
+.loading-spinner {
+  font-size: 3rem;
+  animation: spin 2s linear infinite;
+  margin-bottom: 20px;
+}
+
+.error-state {
+  display: flex;
+  justify-content: center;
+  padding: 40px 20px;
+}
+
+.error-message {
+  background: rgba(220, 38, 38, 0.9);
+  color: white;
+  padding: 2rem;
+  border-radius: 10px;
+  text-align: center;
+  max-width: 400px;
+}
+
+.retry-btn {
+  background: white;
+  color: #dc2626;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-weight: bold;
+  margin-top: 15px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.retry-btn:hover {
+  background: #f3f4f6;
+}
+
+.empty-table-card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 2px dashed rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  padding: 30px 20px;
+  min-width: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.empty-table-content {
+  text-align: center;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.empty-icon {
+  font-size: 2rem;
+  display: block;
+  margin-bottom: 10px;
+}
+
+.empty-text {
+  margin: 0 0 15px 0;
+  font-size: 0.9rem;
+}
+
+.create-empty-btn {
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.create-empty-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 
 /* Адаптивность */

@@ -21,6 +21,7 @@ class Game
     private int $currentBiddingRound = 1;
     private int $currentMaxBet = 0;
     private int $bank = 0;
+    private int $baseBet = 5;
     private ?int $currentPlayerPosition = null;
     private ?PlayerId $currentPlayerId = null;
 
@@ -28,10 +29,24 @@ class Game
         private GameId $id,
         private GameStatus $status,
         private int $roomId,
-        private GameMode $mode
+        private GameMode $mode,
+        int $baseBet = 5
         // Убрали bank и currentPlayerPosition из параметров конструктора
         // они инициализируются значениями по умолчанию выше
-    ) {}
+    ) {    
+        $this->id = $id;
+        $this->status = $status;
+        $this->roomId = $roomId;
+        $this->mode = $mode;
+        $this->baseBet = $baseBet; // 🎯 Это должно быть свойство класса
+        
+        \Log::info("🎮 GAME CONSTRUCTOR", [
+            'game_id' => $id->toInt(),
+            'base_bet' => $baseBet,
+            'base_bet_type' => gettype($baseBet)
+        ]);
+    }
+    
 
     public function start(): void
     {
@@ -308,6 +323,49 @@ class Game
             }
         }
         return null;
+    }
+
+    /**
+     * 🎯 ПОЛУЧИТЬ БАЗОВУЮ СТАВКУ
+     */
+    public function getBaseBet(): int
+    {
+        return $this->baseBet;
+    }
+
+    /**
+     * 🎯 УСТАНОВИТЬ БАЗОВУЮ СТАВКУ
+     */
+    public function setBaseBet(int $baseBet): void
+    {
+        $this->baseBet = $baseBet;
+    }
+
+    /**
+     * 🎯 УДАЛИТЬ ИГРОКА ИЗ ИГРЫ
+     */
+    public function removePlayer(Player $playerToRemove): void
+    {
+        $players = $this->getPlayers();
+        $updatedPlayers = [];
+        
+        foreach ($players as $player) {
+            if ($player->getId()->toInt() !== $playerToRemove->getId()->toInt()) {
+                $updatedPlayers[] = $player;
+            }
+        }
+        
+        // 🎯 Обновляем список игроков через рефлексию
+        $reflection = new \ReflectionClass($this);
+        $property = $reflection->getProperty('players');
+        $property->setAccessible(true);
+        $property->setValue($this, $updatedPlayers);
+        
+        \Log::info("🎯 Player removed from game", [
+            'game_id' => $this->getId()->toInt(),
+            'player_id' => $playerToRemove->getId()->toInt(),
+            'remaining_players' => count($updatedPlayers)
+        ]);
     }
 
 }

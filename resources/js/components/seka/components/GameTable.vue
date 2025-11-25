@@ -15,20 +15,20 @@
                 <div class="bank-label">БАНК</div>
               </div>
 
-              <!-- Колода карт -->
-              <div class="deck-display" v-if="gameStatus === 'active'">
+              <!-- 🎯 КОЛОДА КАРТ - ОБНОВЛЕННАЯ ЛОГИКА -->
+              <div class="deck-display" v-if="shouldShowDeck">
                 <div class="deck-cards">
                   <div class="card-back" v-for="n in 3" :key="n" 
                       :style="{ transform: `translate(${n * 2}px, ${n * 1}px)` }"></div>
                 </div>
-                <div class="deck-count">36</div>
+                <div class="deck-count">{{ getDeckCount() }}</div>
               </div>
             </div>
 
             <!-- Игроки вокруг стола -->
             <div v-for="position in 6" :key="position" 
                  class="player-position" 
-                 :class="[`pos-${position}`, getPositionClass(position)]">
+                 :class="[`pos-${position}`, getPositionClass(position), getPlayerGlow(position)]">
                 <CompactPlayerSlot 
                   :player="getPlayer(position)"
                   :cards="getPlayerCards(position)"
@@ -40,14 +40,11 @@
                   :dealer-position="getDealerPosition()"
                   :current-bet="getCurrentBet()"
                   :players="players"
-                  @player-action="(action) => {
-                    console.log('🎯 [GameTable] Player action received:', action, 'from player:', getPlayer(position).name)
-                    emit('player-action', action)
-                  }"
-                  @player-ready="(playerId) => {
-                    console.log('2. GameTable: event received', playerId)
-                    emit('player-ready', playerId)
-                  }"
+                  :base-bet="baseBet"
+                  :is-action-loading="isActionLoading"
+                  :current-player-id="currentPlayerId"
+                  @player-action="handlePlayerAction"
+                  @player-ready="handlePlayerReady"
                 />
             </div>
 
@@ -105,12 +102,13 @@
             <div class="bank-label">БАНК</div>
           </div>
           
-          <div class="mobile-deck" v-if="gameStatus === 'active'">
+          <!-- 🎯 КОЛОДА ДЛЯ МОБИЛЬНОЙ ВЕРСИИ -->
+          <div class="mobile-deck" v-if="shouldShowDeck">
             <div class="deck-stack">
               <div class="card-back"></div>
               <div class="card-back"></div>
             </div>
-            <div class="deck-count">36</div>
+            <div class="deck-count">{{ getDeckCount() }}</div>
           </div>
         </div>
 
@@ -119,18 +117,24 @@
       <!-- Нижняя панель действий -->
       <div class="mobile-action-panel">
         
-        <!-- Карты текущего игрока -->
+        <!-- 🎯 КАРТЫ ТЕКУЩЕГО ИГРОКА - ОБНОВЛЕННАЯ ЛОГИКА -->
         <div class="player-cards-section" v-if="gameStatus === 'active' && getPlayer(1).id">
           <div class="section-title">Ваши карты:</div>
           <div class="mobile-cards-container">
             <div v-for="(card, index) in getPlayerCards(1)" :key="index" 
-                class="mobile-card">
-              <div class="card-front" v-if="card.isVisible">
+                class="mobile-card" :class="getCardClass(card, index)">
+              <div class="card-front" v-if="shouldShowPlayerCard(card, 1)">
                 <div class="card-rank">{{ card.rank }}</div>
-                <div class="card-suit">{{ card.suit }}</div>
+                <div class="card-suit">{{ getSuitSymbol(card.suit) }}</div>
               </div>
               <div v-else class="card-back-mobile"></div>
             </div>
+          </div>
+          
+          <!-- 🎯 ИНФОРМАЦИЯ О РЕЖИМЕ ИГРОКА -->
+          <div class="player-mode-info" v-if="getPlayer(1).mode">
+            <span v-if="getPlayer(1).mode === 'dark'" class="mode-dark">🌑 Играете в темную</span>
+            <span v-if="getPlayer(1).mode === 'open'" class="mode-open">🎴 Карты открыты</span>
           </div>
         </div>
 
@@ -141,10 +145,15 @@
             <button v-for="action in getAvailableActions()" 
                     :key="action"
                     class="mobile-action-btn"
-                    :class="action"
-                    @click="handleAction(action)">
-              <span class="action-icon">{{ getActionIcon(action) }}</span>
-              <span class="action-text">{{ getActionText(action) }}</span>
+                    :class="[action, { loading: isActionLoading }]"
+                    @click="handleAction(action)"
+                    :disabled="isActionLoading"
+                    :title="getActionDescription(action)">
+              <span v-if="isActionLoading">⏳</span>
+              <span v-else>
+                <span class="action-icon">{{ getActionIcon(action) }}</span>
+                <span class="action-text">{{ getActionText(action) }}</span>
+              </span>
             </button>
           </div>
         </div>
@@ -166,18 +175,73 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import CompactPlayerSlot from './CompactPlayerSlot.vue'
 
 const props = defineProps({
-  players: Array,
-  playerCards: Object,
-  currentPlayerId: Number,
-  bank: Number,
-  currentRound: Number,
-  gameStatus: String,
-  dealerId: Number,
-  isMobile: Boolean
+  players: {
+    type: Array,
+    default: () => []
+  },
+  playerCards: {
+    type: Object,
+    default: () => ({})
+  },
+  currentPlayerId: {
+    type: Number,
+    default: null // 🎯 РАЗРЕШАЕМ null
+  },
+  bank: {
+    type: Number,
+    default: 0
+  },
+  currentRound: {
+    type: Number,
+    default: 1
+  },
+  gameStatus: {
+    type: String,
+    default: 'waiting'
+  },
+  dealerId: {
+    type: Number,
+    default: 1
+  },
+  isMobile: {
+    type: Boolean,
+    default: false
+  },
+  isActionLoading: {
+    type: Boolean,
+    default: false
+  },
+  baseBet: {
+    type: Number,
+    default: 50
+  }
+})
+
+console.log('🎯 [GameTable] Props received:', {
+  players: props.players,
+  playerCards: props.playerCards, 
+  currentPlayerId: props.currentPlayerId,
+  bank: props.bank,
+  currentRound: props.currentRound,
+  gameStatus: props.gameStatus,
+  dealerId: props.dealerId
+})
+
+// Диагностика каждого игрока
+props.players?.forEach((player, index) => {
+  console.log(`🎯 [GameTable] Player ${index}:`, {
+    id: player.id,
+    name: player.name,
+    position: player.position,
+    balance: player.balance,
+    isReady: player.isReady,
+    status: player.status,
+    is_current_player: player.is_current_player
+  })
 })
 
 const emit = defineEmits(['player-action', 'player-ready', 'deal-cards'])
@@ -189,17 +253,124 @@ const isMyTurn = computed(() => {
   return myPlayer && myPlayer.id === props.currentPlayerId
 })
 
-// 🎯 МЕТОДЫ
+const shouldShowDeck = computed(() => {
+  return props.gameStatus === 'active' || props.gameStatus === 'bidding'
+})
+
+// 🎯 МЕТОДЫ ДЛЯ РАБОТЫ С КАРТАМИ
 const getPlayer = (position) => {
   const player = props.players.find(p => p.position === position)
   return player || { 
     id: null, 
     name: 'Свободно', 
     balance: 0, 
-    position: position
+    position: position,
+    mode: null,
+    status: 'waiting',
+    is_ready: false
   }
 }
 
+const getPlayerCards = (position) => {
+  const player = getPlayer(position)
+  
+  // 🎯 БЕЗОПАСНОЕ ПОЛУЧЕНИЕ КАРТ ИГРОКА
+  if (!player.id) return []
+  
+  // 1. Пробуем получить карты из пропса playerCards
+  if (props.playerCards && props.playerCards[player.id]) {
+    return props.playerCards[player.id]
+  }
+  
+  // 2. Пробуем получить карты из самого игрока
+  if (player.cards && Array.isArray(player.cards)) {
+    return player.cards
+  }
+  
+  // 3. Возвращаем заглушки если карт нет
+  return Array(3).fill().map((_, index) => ({
+    rank: '?',
+    suit: '?',
+    is_visible: false,
+    is_stub: true // 🎯 Флаг что это заглушка
+  }))
+}
+
+// 🎯 ЛОГИКА ОТОБРАЖЕНИЯ КАРТ ДЛЯ МОБИЛЬНОЙ ВЕРСИИ
+const shouldShowPlayerCard = (card, position) => {
+  const player = getPlayer(position)
+  
+  // Если карта помечена как видимая
+  if (card.is_visible) return true
+  
+  // Если это текущий игрок и он в режиме 'open'
+  if (player.id === props.currentPlayerId && player.mode === 'open') {
+    return true
+  }
+  
+  // Если игрок выбыл - показываем все карты
+  if (player.status === 'folded') {
+    return true
+  }
+  
+  // Если это заглушка - не показываем
+  if (card.is_stub) {
+    return false
+  }
+  
+  return false
+}
+
+const getCardClass = (card, index) => {
+  const classes = []
+  
+  if (card.is_visible) {
+    classes.push('visible')
+  }
+  
+  if (card.is_stub) {
+    classes.push('stub')
+  }
+  
+  // 🎯 ЦВЕТ КАРТЫ ПО МАСТИ
+  if (card.suit) {
+    if (card.suit === 'hearts' || card.suit === 'diamonds') {
+      classes.push('red-card')
+    } else {
+      classes.push('black-card')
+    }
+  }
+  
+  return classes
+}
+
+const getSuitSymbol = (suit) => {
+  const symbols = {
+    'hearts': '♥',
+    'diamonds': '♦', 
+    'clubs': '♣',
+    'spades': '♠',
+    '♥': '♥',
+    '♦': '♦',
+    '♣': '♣', 
+    '♠': '♠'
+  }
+  return symbols[suit] || suit
+}
+
+const getDeckCount = () => {
+  // 🎯 РЕАЛЬНАЯ ЛОГИКА ПОДСЧЕТА КАРТ В КОЛОДЕ
+  // В SEKA 21 карта, вычитаем розданные
+  const totalCards = 21
+  const dealtCards = props.players.reduce((total, player) => {
+    const cards = getPlayerCards(player.position)
+    return total + (cards ? cards.length : 0)
+  }, 0)
+  
+  return Math.max(totalCards - dealtCards, 0)
+}
+
+// 🎯 ОСТАЛЬНЫЕ МЕТОДЫ (АДАПТИРОВАННЫЕ)
 const getDealerPosition = () => {
   const dealer = props.players.find(p => p.id === props.dealerId)
   const position = dealer?.position || 1
@@ -214,17 +385,14 @@ const getDealerPosition = () => {
 }
 
 const getCurrentBet = () => {
-  return Math.max(...props.players.map(p => p.currentBet), 50)
+  return Math.max(...props.players.map(p => p.current_bet || 0), props.baseBet)
 }
 
-const getPlayerCards = (position) => {
-  const player = getPlayer(position)
-  return props.playerCards[player.id] || []
+const getCurrentPlayer = () => {
+  const currentPlayer = props.players.find(p => p.id === props.currentPlayerId)
+  return currentPlayer || getPlayer(1)
 }
 
-const getCurrentPlayer = () => getPlayer(props.players.findIndex(p => p.id === props.currentPlayerId) + 1)
-
-// В GameTable.vue - метод isCurrentTurn
 const isCurrentTurn = (position) => {
   const player = getPlayer(position)
   const result = player.id === props.currentPlayerId && player.id !== null
@@ -232,8 +400,7 @@ const isCurrentTurn = (position) => {
   console.log(`🎯 [GameTable] isCurrentTurn(${position}):`, result, 
     'player:', player.name, 
     'playerId:', player.id, 
-    'currentPlayerId:', props.currentPlayerId,
-    'props.currentPlayerId:', props.currentPlayerId)
+    'currentPlayerId:', props.currentPlayerId)
     
   return result
 }
@@ -247,7 +414,8 @@ const getPositionClass = (position) => ({
   'occupied': getPlayer(position).name !== 'Свободно',
   'empty': getPlayer(position).name === 'Свободно',
   'current': isCurrentTurn(position),
-  'dealer': isDealer(position)
+  'dealer': isDealer(position),
+  'folded': getPlayer(position).status === 'folded'
 })
 
 const getMobilePositionClass = (position) => ({
@@ -267,13 +435,57 @@ const getGameStatusText = () => {
   switch(props.gameStatus) {
     case 'waiting': return '⏳ Ожидание'
     case 'active': return '🎯 Игра идет'
-    default: return '❓ Неизвестно'
+    case 'bidding': return '📈 Торги'
+    case 'finished': return '🏁 Завершена'
+    default: return props.gameStatus || '❓ Неизвестно'
   }
 }
 
+// 🎯 ДЕЙСТВИЯ ДЛЯ МОБИЛЬНОЙ ВЕРСИИ
 const getAvailableActions = () => {
   if (!isMyTurn.value) return []
-  return ['check', 'call', 'raise', 'fold', 'dark']
+  
+  const player = getPlayer(1) // Мобильный игрок всегда на позиции 1
+  const actions = ['call', 'raise', 'fold']
+  const isAfterDealer = isPlayerAfterDealer(1)
+  
+  // CHECK: только следующий после дилера в 1 раунде при базовой ставке
+  if (isAfterDealer && props.currentRound === 1 && getCurrentBet() <= props.baseBet) {
+    actions.unshift('check')
+  }
+
+  // DARK: только следующий после дилера в 1-2 раундах, если еще не выбрал режим
+  if (isAfterDealer && props.currentRound <= 2 && (!player.mode || player.mode === 'none')) {
+    actions.push('dark')
+  }
+
+  // OPEN: всегда доступно если режим еще не выбран
+  if (!player.mode || player.mode === 'none') {
+    actions.push('open')
+  }
+
+  // REVEAL: со 2 раунда
+  if (props.currentRound >= 2) {
+    actions.push('reveal')
+  }
+
+  return actions
+}
+
+const isPlayerAfterDealer = (position) => {
+  if (!props.players || !getDealerPosition()) return false
+  
+  const activePlayers = props.players
+    .filter(p => p.id && p.status !== 'folded')
+    .sort((a, b) => a.position - b.position)
+  
+  if (activePlayers.length === 0) return false
+  
+  const dealerIndex = activePlayers.findIndex(p => p.position === getDealerPosition())
+  if (dealerIndex === -1) return false
+  
+  const nextPlayerIndex = (dealerIndex + 1) % activePlayers.length
+  return activePlayers[nextPlayerIndex]?.position === position
 }
 
 const getActionText = (action) => {
@@ -292,12 +504,27 @@ const getActionText = (action) => {
 const getActionIcon = (action) => {
   const icons = {
     'check': '➡️',
-    'call': '✅', 
+    'call': '✅',
     'raise': '📈',
     'fold': '🏳️',
-    'dark': '🕶️'
+    'dark': '🌑',
+    'open': '🎴',
+    'reveal': '🔍'
   }
   return icons[action] || '🎯'
+}
+
+const getActionDescription = (action) => {
+  const descriptions = {
+    'check': 'Пропустить ход без ставки',
+    'call': 'Поддержать текущую ставку',
+    'raise': 'Повысить ставку',
+    'fold': 'Сбросить карты и выйти из раунда',
+    'dark': 'Играть в темную (ставка ×0.5)',
+    'open': 'Открыть свои карты',
+    'reveal': 'Вскрыться против оппонента'
+  }
+  return descriptions[action] || action
 }
 
 const handleAction = (action) => {
@@ -316,9 +543,111 @@ const handleAction = (action) => {
 const handlePlayerAction = (action) => {
   emit('player-action', action)
 }
+
+const handlePlayerReady = (playerId) => {
+  emit('player-ready', playerId)
+}
+
+// 🎯 ВИЗУАЛИЗАЦИЯ РЕЖИМОВ НА СТОЛЕ
+const getPlayerCardStyles = (position) => {
+  const player = getPlayer(position)
+  if (!player.mode) return {}
+  
+  if (player.mode === 'dark') {
+    return {
+      border: '2px solid #8b5cf6',
+      boxShadow: '0 0 10px rgba(139, 92, 246, 0.5)'
+    }
+  }
+  
+  if (player.mode === 'open') {
+    return {
+      border: '2px solid #10b981', 
+      boxShadow: '0 0 10px rgba(16, 185, 129, 0.5)'
+    }
+  }
+  
+  return {}
+}
+
+const getPlayerGlow = (position) => {
+  const player = getPlayer(position)
+  if (!player.mode) return ''
+  
+  if (player.mode === 'dark') return 'dark-glow'
+  if (player.mode === 'open') return 'open-glow'
+  
+  return ''
+}
+
+// GameTable.vue - ДИАГНОСТИКА РАСПРЕДЕЛЕНИЯ
+const playerSlots = computed(() => {
+  console.log('🎯 [GameTable] Creating player slots:')
+  
+  const slots = Array(6).fill(null).map((_, index) => {
+    const slotPosition = index + 1
+    const player = props.players.find(p => p.position === slotPosition)
+    
+    console.log(`  Slot ${slotPosition}:`, {
+      expectedPlayer: player,
+      hasPlayer: !!player,
+      playerName: player?.name || 'Свободно',
+      playerPosition: player?.position
+    })
+    
+    return player || { name: 'Свободно', position: slotPosition }
+  })
+  
+  console.log('🎯 [GameTable] Final slots:', slots)
+  return slots
+})
+
+console.log('🎯 [GameTable] ALL PROPS:', {
+  players: props.players,
+  playerCards: props.playerCards,
+  currentPlayerId: props.currentPlayerId,
+  bank: props.bank,
+  currentRound: props.currentRound,
+  gameStatus: props.gameStatus,
+  dealerId: props.dealerId,
+  isMobile: props.isMobile,
+  isActionLoading: props.isActionLoading
+})
+
+onMounted(() => {
+  console.log('🎯 [GameTable] MOUNTED with props:', {
+    players: props.players,
+    playersCount: props.players?.length,
+    currentPlayerId: props.currentPlayerId,
+    gameStatus: props.gameStatus
+  })
+})
+
+// Диагностика при обновлении props
+watch(() => props.players, (newPlayers) => {
+  console.log('🔄 [GameTable] Players UPDATED:', {
+    count: newPlayers?.length,
+    players: newPlayers,
+    names: newPlayers?.map(p => p.name),
+    readyStates: newPlayers?.map(p => p.isReady)
+  })
+}, { deep: true })
+
+watch(() => props.gameStatus, (newStatus) => {
+  console.log('🔄 [GameTable] GameStatus UPDATED:', newStatus)
+})
+
 </script>
 
 <style scoped>
+/* 🎯 СВЕЧЕНИЕ ДЛЯ РЕЖИМОВ НА СТОЛЕ */
+.player-position.dark-glow {
+  filter: drop-shadow(0 0 8px rgba(139, 92, 246, 0.6));
+}
+
+.player-position.open-glow {
+  filter: drop-shadow(0 0 8px rgba(16, 185, 129, 0.6));
+}
 /* 🎴 ДЕСКТОПНАЯ ВЕРСИЯ */
 .desktop-table {
   width: 100%;
@@ -853,6 +1182,50 @@ const handlePlayerAction = (action) => {
   animation: pulse 2s infinite;
 }
 
+/* 🎯 ДОПОЛНИТЕЛЬНЫЕ СТИЛИ ДЛЯ КАРТ */
+.mobile-card.visible {
+  border: 2px solid #10b981;
+}
+
+.mobile-card.stub {
+  opacity: 0.5;
+}
+
+.mobile-card.red-card .card-front {
+  color: #dc2626;
+}
+
+.mobile-card.black-card .card-front {
+  color: #1a202c;
+}
+
+/* 🎯 СТИЛИ ДЛЯ РЕЖИМА ИГРОКА */
+.player-mode-info {
+  text-align: center;
+  margin-top: 8px;
+  font-size: 0.8rem;
+}
+
+.mode-dark {
+  color: #8b5cf6;
+  font-weight: bold;
+}
+
+.mode-open {
+  color: #10b981;
+  font-weight: bold;
+}
+
+/* 🎯 СТИЛИ ДЛЯ ЗАГРУЗКИ ДЕЙСТВИЙ */
+.mobile-action-btn.loading {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.mobile-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.7; }
@@ -893,4 +1266,5 @@ const handlePlayerAction = (action) => {
     min-height: 45px;
   }
 }
+
 </style>

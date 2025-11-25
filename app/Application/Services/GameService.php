@@ -165,25 +165,30 @@ class GameService
 
         // Конфигурация столов
         $tableConfig = $this->getTableConfig($tableType);
+        $baseBet = $tableConfig['base_bet'];
 
         // Создаем ID игры
-        $gameId = GameId::fromInt(rand(1000, 9999));
+        $gameId = $this->generateGameId();
 
-        // Создаем игру
+        // 🎯 СОЗДАЕМ ИГРУ С ПРАВИЛЬНОЙ БАЗОВОЙ СТАВКОЙ
         $game = new Game(
-            $gameId,
+            GameId::fromInt($gameId),
             GameStatus::WAITING,
-            $gameId->toInt(), // roomId
-            GameMode::OPEN
+            $gameId,
+            GameMode::OPEN,
+            $baseBet // 🎯 Устанавливаем базовую ставку
         );
 
-        // Добавляем создателя игры
-        $player = $this->addPlayerToGame($game, $userId, "Player_{$userId}");
+        // Добавляем создателя игры (если userId не 0)
+        if ($userId > 0) {
+            $player = $this->addPlayerToGame($game, $userId, "Player_{$userId}");
+        }
 
         \Log::info("🎯 New game created successfully", [
-            'game_id' => $gameId->toInt(),
+            'game_id' => $gameId,
             'user_id' => $userId,
             'table_type' => $tableType,
+            'base_bet' => $baseBet,
             'players_count' => count($game->getPlayers())
         ]);
 
@@ -193,7 +198,7 @@ class GameService
     /**
      * 🎯 КОНФИГУРАЦИЯ СТОЛОВ
      */
-    private function getTableConfig(string $tableType): array
+    public function getTableConfig(string $tableType): array
     {
         return match($tableType) {
             'novice' => ['base_bet' => 5, 'min_balance' => 50, 'name' => 'Новички'],
@@ -231,7 +236,11 @@ class GameService
      */
     public function canGameStart(Game $game): bool
     {
-        return count($game->getActivePlayers()) >= 2;
+        $readyPlayers = array_filter($game->getPlayers(), function($player) {
+            return $player->isReady() && $player->getStatus() === PlayerStatus::ACTIVE;
+        });
+        
+        return count($readyPlayers) >= 2; // 🎯 Минимум 2 готовых игрока
     }
 
     /**
@@ -252,4 +261,25 @@ class GameService
             'total_prize' => $bank
         ];
     }
+
+    /**
+     * 🎯 ГЕНЕРАЦИЯ УНИКАЛЬНОГО ID ИГРЫ
+     */
+    public function generateGameId(): int
+    {
+        $repository = new \App\Domain\Game\Repositories\CachedGameRepository();
+        
+        for ($attempt = 1; $attempt <= 5; $attempt++) {
+            $gameId = random_int(100000, 999999);
+            
+            $existingGame = $repository->find(\App\Domain\Game\ValueObjects\GameId::fromInt($gameId));
+            if (!$existingGame) {
+                return $gameId;
+            }
+            usleep(10000);
+        }
+        
+        return (int) (microtime(true) * 1000) % 1000000;
+    }
+
 }

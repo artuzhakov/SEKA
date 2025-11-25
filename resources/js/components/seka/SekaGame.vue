@@ -6,6 +6,19 @@
       <div class="status-badge">🌐 Реальный режим</div>
     </div>
 
+    <!-- 🎯 КОМПОНЕНТЫ ТАЙМЕРОВ -->
+    <GameTimers 
+      :turn-time-left="turnTimeLeft"
+      :ready-time-left="readyTimeLeft"
+      :reveal-time-left="revealTimeLeft"
+      :turn-progress="turnProgress"
+      :ready-progress="readyProgress"
+      :is-turn-critical="isTurnTimeCritical"
+      :is-ready-critical="isReadyTimeCritical"
+      :game-status="gameStatus"
+      :current-player-name="currentPlayerName"
+    />
+
     <!-- Система готовности -->
     <ReadyCheck 
       v-if="gameStatus === 'waiting'"
@@ -22,16 +35,27 @@
       <div class="game-meta">
         <div class="meta-item">Банк: <strong>{{ pot }} 🪙</strong></div>
         <div class="meta-item">Раунд: <strong>{{ currentRound }}</strong></div>
-        <div class="meta-item">Дилер: <strong>{{ dealerName }}</strong></div>
         <div class="meta-item" v-if="gameStatus === 'waiting'">
           Готовы: <strong class="waiting-status">{{ readyCount }}/6</strong>
+          <span v-if="readyTimeLeft > 0" class="timer-badge">
+            {{ formatTime(readyTimeLeft) }}
+          </span>
         </div>
         <div class="meta-item" v-if="gameStatus === 'active'">
           Ходит: <strong class="current-player">{{ currentPlayerName }}</strong>
+          <span v-if="turnTimeLeft > 0" class="timer-badge" :class="{ critical: isTurnTimeCritical }">
+            {{ formatTime(turnTimeLeft) }}
+          </span>
         </div>
-        <div class="meta-item" v-if="gameStatus === 'active'">
-          Игроков: <strong>{{ activePlayersCount }}/6</strong>
-        </div>
+      </div>
+      <div class="game-actions-header">
+        <button 
+          @click="leaveGame" 
+          class="leave-game-btn"
+          :disabled="isActionLoading"
+        >
+          🚪 Выйти в лобби
+        </button>
       </div>
     </div>
 
@@ -44,7 +68,7 @@
     </div>
 
     <!-- Панель информации о ставках -->
-    <div class="betting-info-panel">
+    <div v-if="shouldShowBettingInfo" class="betting-info-panel">
       <div class="betting-stats">
         <div class="stat-item">
           <span class="label">Текущая ставка:</span>
@@ -65,20 +89,114 @@
       </div>
     </div>
 
-    <!-- Игровой стол -->
-    <GameTable
+    <!-- ПОКАЗЫВАЕМ ИНФОРМАЦИЮ О ЖДАНИИ -->
+    <div v-else class="waiting-info-panel">
+      <div class="waiting-stats">
+        <div class="stat-item">
+          <span class="label">Статус:</span>
+          <span class="value">Ожидание игроков</span>
+        </div>
+        <div class="stat-item">
+          <span class="label">Игроков:</span>
+          <span class="value">{{ players.length }}/6</span>
+        </div>
+        <div class="stat-item">
+          <span class="label">Базовая ставка:</span>
+          <span class="value">{{ baseBet }}🪙</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 🎯 ПЕРЕХОД ХОДА -->
+    <!-- <TurnTransition 
+      :is-visible="isTurnTransitioning"
+      :previous-player="previousPlayer"
+      :current-player="currentPlayer"
+      :current-player-actions="currentPlayerActions"
+      :turn-time-left="turnTimeLeft"
+    /> -->
+
+    <!-- 🎯 REVEAL OVERLAY -->
+    <!-- <RevealOverlay 
+      :reveal-state="revealState"
       :players="players"
-      :player-cards="playerCards"
-      :current-player-id="currentPlayerId"
-      :bank="pot"
-      :current-round="currentRound"
-      :game-status="gameStatus"
-      :dealer-id="dealerId"
-      :is-mobile="isMobile"
-      @player-action="handlePlayerAction"
-      @player-ready="handlePlayerReady"
-      @deal-cards="handleDealCards"
-    />
+      :reveal-time-left="revealTimeLeft"
+    /> -->
+
+    <!-- Игровой стол -->
+  <GameTable
+    v-if="shouldRenderGameTable && !isLoading && players.length > 0"
+    :players="players"
+    :player-cards="playerCards"
+    :current-player-id="currentPlayerId || 0"
+    :bank="pot"
+    :current-round="currentRound"
+    :game-status="gameStatus"
+    :dealer-id="dealerId"
+    :is-mobile="isMobile"
+    :is-action-loading="isActionLoading"
+    @player-action="handlePlayerAction"
+    @player-ready="handlePlayerReady"
+    @deal-cards="handleDealCards"
+  />
+
+  <!-- Loading state -->
+  <div v-else class="loading-state">
+    <div class="loading-spinner">🎴</div>
+    <p>Загрузка игры...</p>
+  </div>
+
+    <!-- 🎯 ИНДИКАТОР ТЕКУЩЕГО ХОДА -->
+    <div v-if="gameStatus === 'active' && currentPlayer" class="current-turn-indicator">
+      <div class="indicator-content">
+        <div class="turn-info">
+          <span class="turn-icon">🎯</span>
+          <span class="turn-text">Сейчас ходит:</span>
+          <span class="player-name">{{ currentPlayer.name }}</span>
+        </div>
+        <div v-if="turnTimeLeft > 0" class="turn-timer" :class="{ critical: isTurnTimeCritical }">
+          {{ formatTime(turnTimeLeft) }}
+        </div>
+      </div>
+    </div>
+
+    <div v-if="!isUserInGame && gameStatus === 'waiting_for_players'" class="join-game-overlay">
+      <div class="join-game-panel">
+        <h3>Присоединиться к игре?</h3>
+        <p>Вы не участвуете в этой игре</p>
+        <button @click="joinCurrentGame" class="join-game-btn">
+          🎮 Присоединиться к игре
+        </button>
+      </div>
+    </div>
+
+    Кнопка готовности (показывается когда есть другие игроки)
+    <div v-if="canMarkReady" class="ready-check-overlay">
+      <div class="ready-check-panel">
+        <h3>Готовы начать?</h3>
+        <p>В игре уже {{ otherPlayersCount }} игрок(ов). Отметьтесь готовым чтобы начать!</p>
+        <button @click="markPlayerReady" class="ready-btn">
+          ✅ Готов играть
+        </button>
+      </div>
+    </div>
+
+    <!-- Информация о ожидании других игроков -->
+    <!-- <div v-if="isUserInGame && !isMyPlayerReady && otherPlayersCount === 0" class="waiting-overlay">
+      <div class="waiting-panel">
+        <h3>Ожидаем других игроков...</h3>
+        <p>Присоединитесь к игре с другого устройства или пригласите друзей</p>
+        <div class="waiting-spinner">🎴</div>
+      </div>
+    </div> -->
+
+    <!-- Информация о том что игрок готов и ждет других -->
+    <div v-if="isMyPlayerReady && readyPlayersCount < 2" class="waiting-ready-overlay">
+      <div class="waiting-ready-panel">
+        <h3>Вы готовы! 🎯</h3>
+        <p>Ожидаем других игроков... Готово: {{ readyPlayersCount }}/2</p>
+      </div>
+    </div>
 
     <!-- Модальное окно повышения ставки для ПК -->
     <div v-if="raiseModal && !isMobile" class="modal-overlay desktop-modal">
@@ -252,6 +370,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { usePage } from '@inertiajs/vue3'
 
 // 🎯 РЕАЛЬНЫЕ КОМПОЗАБЛЫ
 import { useGameState } from './composables/useGameState'
@@ -260,10 +379,16 @@ import { useGameActions } from './composables/useGameActions'
 // Компоненты
 import GameTable from './components/GameTable.vue'
 import ReadyCheck from './components/ReadyCheck.vue'
+import GameTimers from './components/GameTimers.vue'
+import RevealOverlay from './components/RevealOverlay.vue'
+import TurnTransition from './components/TurnTransition.vue'
 
 const props = defineProps({
   gameId: Number
 })
+
+const page = usePage()
+const authUser = computed(() => page.props.auth.user)
 
 // 🎯 РЕАЛЬНЫЕ ДАННЫЕ ИЗ БЭКЕНДА
 const { 
@@ -275,15 +400,51 @@ const {
   activePlayers: backendActivePlayers,
   readyPlayersCount: backendReadyCount,
   gameStatus: backendGameStatus,
+
+  // 🎯 ТАЙМЕРЫ
+  turnTimeLeft,
+  readyTimeLeft,
+  revealTimeLeft,
+  turnProgress,
+  readyProgress,
+  isTurnTimeCritical,
+  isReadyTimeCritical,
+  isRevealTimeCritical,
+
   joinGame,
   loadGameState
 } = useGameState(props.gameId)
 
+// 🎯 ВРЕМЕННЫЕ ЗАГЛУШКИ ДЛЯ НЕРЕАЛИЗОВАННЫХ ФУНКЦИЙ
+const isTurnTransitioning = ref(false)
+const previousPlayer = ref(null)
+const currentPlayerActions = ref([])
+const revealState = ref({ 
+  isActive: false, 
+  participants: [], 
+  winnerId: null, 
+  loserId: null, 
+  resolved: false 
+})
+const resetRevealState = () => {
+  revealState.value = { 
+    isActive: false, 
+    participants: [], 
+    winnerId: null, 
+    loserId: null, 
+    resolved: false 
+  }
+}
+
+// 🎯 ИНИЦИАЛИЗИРУЕМ ДЕЙСТВИЯ
 const { 
   performAction,
-  markPlayerReady,
+  leaveGame,
   isActionLoading,
-  lastError 
+  lastError,
+  lastSuccess,
+  clearError,
+  clearSuccess
 } = useGameActions(props.gameId)
 
 // 🎯 ЛОКАЛЬНЫЕ СОСТОЯНИЯ ДЛЯ UI
@@ -292,45 +453,149 @@ const raiseAmount = ref(0)
 const currentActionMode = ref(null) // 'dark' | 'raise'
 const isMobile = ref(false)
 
-// 🎯 ВЫЧИСЛЯЕМЫЕ СВОЙСТВА ИЗ РЕАЛЬНЫХ ДАННЫХ
-const gameStatus = computed(() => backendGameStatus.value || 'waiting')
-const pot = computed(() => backendGameState.value?.game?.bank || 0)
-const currentRound = computed(() => backendGameState.value?.game?.current_round || 1)
-const currentPlayerId = computed(() => backendGameState.value?.game?.current_player_id)
-const dealerId = computed(() => backendGameState.value?.game?.dealer_id || 1)
-const currentMaxBet = computed(() => backendGameState.value?.game?.current_max_bet || 0)
-const baseBet = computed(() => backendGameState.value?.game?.base_bet || 50)
+// SekaGame.vue - ПОЛУЧАЕМ ДАННЫЕ СТОЛА
+const tableData = ref(null)
 
-const players = computed(() => {
-  // 🎯 ИСПРАВЛЕНО: берем игроков из game.players
-  if (!backendGameState.value?.game?.players) return []
-  
-  return backendGameState.value.game.players.map(player => ({
-    id: player.id,
-    name: player.name,
-    position: player.position,
-    balance: player.balance,
-    currentBet: player.current_bet,
-    isFolded: player.status === 'folded',
-    isDark: player.status === 'dark',
-    isReady: player.is_ready,
-    status: player.status
-  }))
+// 🎯 ЗАГРУЖАЕМ ДАННЫЕ СТОЛА ПРИ ЗАХОДЕ В ИГРУ
+const loadTableData = async () => {
+  try {
+    // 🎯 ПРОБУЕМ ПОЛУЧИТЬ ДАННЫЕ СТОЛА ИЗ ЛОББИ
+    const response = await fetch('/api/seka/lobby')
+    if (response.ok) {
+      const data = await response.json()
+      if (data.success && data.games) {
+        // 🎯 НАХОДИМ НАШ СТОЛ ПО ID
+        const currentTable = data.games.find(game => game.id === props.gameId)
+        if (currentTable) {
+          tableData.value = currentTable
+          console.log('🎯 Table data loaded:', currentTable)
+        }
+      }
+    }
+  } catch (error) {
+    console.error('❌ Failed to load table data:', error)
+  }
+}
+
+// 🎯 ВЫЧИСЛЯЕМЫЕ СВОЙСТВА ИЗ РЕАЛЬНЫХ ДАННЫХ
+const gameStatus = computed(() => backendGameStatus.value || 'waiting_for_players')
+const currentPlayerId = computed(() => {
+  return backendGameState.value?.current_player_id || 0 // 🎯 0 вместо null/undefined
 })
+const dealerId = computed(() => backendGameState.value?.dealer_id || 1)
+// SekaGame.vue - ИСПРАВЛЯЕМ ДАННЫЕ ДЛЯ НЕНАЧАТОЙ ИГРЫ
+const baseBet = computed(() => {
+  // 🎯 ПРИОРИТЕТЫ: данные стола → бэкенд игры → дефолт
+  if (tableData.value?.base_bet) {
+    return tableData.value.base_bet // 🎯 5, 10, 25, 50 в зависимости от стола
+  }
+  
+  if (backendGameState.value?.base_bet) {
+    return backendGameState.value.base_bet
+  }
+  
+  return 50 // 🎯 Фолбэк
+})
+
+const currentMaxBet = computed(() => {
+  // 🎯 ЕСЛИ ИГРА НЕ НАЧАЛАСЬ - СТАВОК ЕЩЕ НЕТ
+  if (gameStatus.value === 'waiting_for_players') {
+    return 0
+  }
+  return backendGameState.value?.max_bet || 0
+})
+
+const pot = computed(() => {
+  // 🎯 ЕСЛИ ИГРА НЕ НАЧАЛАСЬ - БАНК ПУСТОЙ
+  if (gameStatus.value === 'waiting_for_players') {
+    return 0
+  }
+  return backendGameState.value?.bank || 0
+})
+
+const currentRound = computed(() => {
+  // 🎯 ЕСЛИ ИГРА НЕ НАЧАЛАСЬ - РАУНДА НЕТ
+  if (gameStatus.value === 'waiting_for_players') {
+    return 0
+  }
+  return backendGameState.value?.round || 1
+})
+
+const shouldShowBettingInfo = computed(() => {
+  // 🎯 ПОКАЗЫВАТЬ ИНФОРМАЦИЮ О СТАВКАХ ТОЛЬКО КОГДА ИГРА НАЧАЛАСЬ
+  return gameStatus.value !== 'waiting_for_players'
+})
+
+
+const shouldRenderGameTable = computed(() => {
+  const shouldRender = !isLoading.value && players.value.length > 0
+  console.log('🎯 [SekaGame] shouldRenderGameTable:', {
+    isLoading: isLoading.value,
+    playersCount: players.value.length,
+    shouldRender,
+    players: players.value
+  })
+  return shouldRender
+})
+
+// 🎯 АДАПТИРУЕМ ВЫЧИСЛЯЕМЫЕ СВОЙСТВА ПОД РЕАЛЬНЫЙ API
+const players = computed(() => {
+  if (!backendGameState.value?.players_list) return []
+  
+  return backendGameState.value.players_list.map(player => {
+    // 🎯 ИСПРАВЛЯЕМ ИМЯ - если это текущий пользователь, используем его имя
+    let playerName = player.name
+    if (player.id === authUser.value?.id) {
+      playerName = authUser.value.name // "Admin" вместо "Player_27"
+    }
+    
+    console.log('🎯 Player name mapping:', {
+      backendName: player.name,
+      authName: authUser.value?.name,
+      finalName: playerName,
+      isCurrentUser: player.id === authUser.value?.id
+    })
+    
+    return {
+      id: player.id,
+      name: playerName, // 🎯 ИСПОЛЬЗУЕМ ИСПРАВЛЕННОЕ ИМЯ
+      position: player.position,
+      balance: player.balance,
+      currentBet: 0,
+      isFolded: player.status === 'folded',
+      isDark: false,
+      isReady: player.is_ready || false,
+      status: player.status,
+      is_current_player: player.id === authUser.value?.id
+    }
+  })
+})
+
+// 🎯 ОБРАБОТЧИК ВЫХОДА
+const handleLeaveGame = async () => {
+  try {
+    await leaveGame()
+    // 🎯 РЕДИРЕКТ В ЛОББИ ПОСЛЕ УСПЕШНОГО ВЫХОДА
+    window.location.href = '/lobby'
+  } catch (error) {
+    console.error('❌ Leave game error:', error)
+    // Ошибка уже обработана в композейбле
+  }
+}
 
 const playerCards = computed(() => {
   const cards = {}
   // 🎯 ИСПРАВЛЕНО: берем из game.players
-  if (backendGameState.value?.game?.players) {
-    backendGameState.value.game.players.forEach(player => {
-      if (player.cards) {
-        cards[player.id] = player.cards.map(card => ({
-          ...card,
-          isVisible: card.is_visible || false
-        }))
-      }
-    })
-  }
+  // if (backendGameState.value?.game?.players) {
+  //   backendGameState.value.game.players.forEach(player => {
+  //     if (player.cards) {
+  //       cards[player.id] = player.cards.map(card => ({
+  //         ...card,
+  //         isVisible: card.is_visible || false
+  //       }))
+  //     }
+  //   })
+  // }
   return cards
 })
 
@@ -338,8 +603,34 @@ const readyCount = computed(() => backendReadyCount.value || 0)
 const activePlayersCount = computed(() => backendActivePlayers.value?.length || 0)
 
 const currentPlayer = computed(() => {
-  return backendCurrentPlayer.value || { 
-    name: 'Игрок', 
+  if (!backendGameState.value?.players_list || !authUser.value) {
+    return { 
+      name: 'Неизвестный', 
+      balance: 0, 
+      currentBet: 0,
+      position: 0
+    }
+  }
+  
+  // 🎯 НАХОДИМ ИГРОКА ПО АВТОРИЗАЦИИ
+  const player = backendGameState.value.players_list.find(p => p.id === authUser.value.id)
+  
+  if (player) {
+    console.log('🎯 Found current player by auth:', player)
+    return {
+      name: player.name || `Player_${player.id}`,
+      balance: player.balance,
+      currentBet: 0,
+      position: player.position,
+      id: player.id,
+      isReady: player.is_ready || false,
+      status: player.status
+    }
+  }
+  
+  console.log('⚠️ Current player not found in players_list, auth user:', authUser.value)
+  return { 
+    name: 'Неизвестный', 
     balance: 0, 
     currentBet: 0,
     position: 0
@@ -379,14 +670,17 @@ const quickAmounts = computed(() => {
 })
 
 // 🎯 ОСНОВНЫЕ МЕТОДЫ
+
+// 🎯 ОБРАБОТЧИК ДЕЙСТВИЙ ИГРОКА
 const handlePlayerAction = async (action, betAmount = null) => {
-  console.log('🎯 Real action:', action, 'betAmount:', betAmount)
+  console.log('🎯 [SekaGame] Handling player action:', action, 'amount:', betAmount)
   
-  if (action === 'raise' || action === 'dark') {
-    currentActionMode.value = action
-    openRaiseModal()
-  } else {
+  try {
     await performAction(action, betAmount)
+    // 🎯 WebSocket обновит состояние автоматически
+  } catch (error) {
+    console.error('❌ Action failed in SekaGame:', error)
+    // Ошибка уже сохранена в lastError
   }
 }
 
@@ -422,6 +716,20 @@ const openRaiseModal = () => {
   })
 }
 
+// SekaGame.vue - ДИАГНОСТИКА СТАВОК
+const bettingData = computed(() => {
+  return {
+    baseBetFromBackend: backendGameState.value?.base_bet,
+    currentMaxBet: backendGameState.value?.max_bet,
+    bank: backendGameState.value?.bank,
+    hasBettingData: !!backendGameState.value?.base_bet
+  }
+})
+
+watch(bettingData, (newData) => {
+  console.log('💰 [SekaGame] Betting data:', newData)
+}, { deep: true })
+
 const confirmRaise = async () => {
   try {
     const action = currentActionMode.value === 'dark' ? 'dark' : 'raise'
@@ -445,30 +753,124 @@ const getAdjustedBet = (baseAmount) => {
   return baseAmount
 }
 
+// 🎯 ВЫЧИСЛЯЕМЫЕ СВОЙСТВА ДЛЯ УСЛОВИЙ
+// 🎯 ИСПРАВЛЯЕМ ПРОВЕРКУ ПОЛЬЗОВАТЕЛЯ В ИГРЕ
+const isUserInGame = computed(() => {
+  if (!authUser.value || !backendGameState.value?.players_list) return false
+  
+  const userInGame = backendGameState.value.players_list.some(player => player.id === authUser.value.id)
+  console.log('🎯 isUserInGame check:', {
+    authUserId: authUser.value.id,
+    players: backendGameState.value.players_list.map(p => p.id),
+    result: userInGame
+  })
+  
+  return userInGame
+})
+
+const otherPlayersCount = computed(() => {
+  if (!players.value) return 0
+  return players.value.filter(player => player.id !== authUser.value?.id).length
+})
+
+const canMarkReady = computed(() => {
+  return isUserInGame.value && 
+         !isMyPlayerReady.value && 
+         otherPlayersCount.value >= 1 && // 🎯 Минимум 1 другой игрок
+         gameStatus.value === 'waiting_for_players'
+})
+
+// 🎯 ИСПРАВЛЯЕМ ГОТОВНОСТЬ ТЕКУЩЕГО ИГРОКА
+const isMyPlayerReady = computed(() => {
+  const myPlayer = backendGameState.value?.players_list?.find(p => p.id === authUser.value?.id)
+  const isReady = myPlayer?.is_ready || false
+  console.log('🎯 isMyPlayerReady:', { playerId: authUser.value?.id, isReady })
+  return isReady
+})
+
+const myPlayer = computed(() => {
+  if (!authUser.value || !backendGameState.value?.players_list) return null
+  return backendGameState.value.players_list.find(player => player.id === authUser.value.id)
+})
+
+// 🎯 ФОРМАТИРОВАНИЕ ВРЕМЕНИ ДЛЯ ОТОБРАЖЕНИЯ
+const formatTime = (seconds) => {
+  if (seconds <= 0) return '0:00'
+  const mins = Math.floor(seconds / 60)
+  const secs = seconds % 60
+  return `${mins}:${secs.toString().padStart(2, '0')}`
+}
+
+// В SekaGame.vue - ДОБАВЛЯЕМ ДИАГНОСТИКУ
+console.log('🎯 SekaGame mounted with gameId:', props.gameId)
+console.log('👤 Auth user:', authUser.value)
+
+// 🎯 ДИАГНОСТИКА КОМПОЗЕЙБЛА
+console.log('🎯 useGameState results:', {
+  backendGameState: backendGameState.value,
+  isLoading: isLoading.value,
+  currentPlayer: backendCurrentPlayer.value,
+  gameStatus: backendGameStatus.value
+})
+
+watch(readyTimeLeft, (newTime, oldTime) => {
+  if (oldTime > 0 && newTime === 0) {
+    console.log('⏰ Ready timer expired - backend will handle...')
+  }
+})
+
+// 🎯 ОБРАБОТКА ИСТЕЧЕНИЯ ТАЙМЕРОВ
+watch(turnTimeLeft, (newTime, oldTime) => {
+  if (oldTime > 0 && newTime === 0) {
+    console.log('⏰ Turn timer expired - waiting for backend auto-fold...')
+    // Можно показать уведомление
+  }
+})
+
+// В SekaGame.vue после computed currentPlayer
+watch(backendCurrentPlayer, (newPlayer) => {
+  console.log('🎯 REAL Current Player from Backend:', newPlayer)
+}, { immediate: true })
+
+watch(currentPlayerId, (newId) => {
+  console.log('🎯 Current Player ID:', newId)
+  console.log('🎯 All Players:', players.value)
+}, { immediate: true })
+
 // 🎯 LIFECYCLE
 onMounted(async () => {
   checkDevice()
   window.addEventListener('resize', checkDevice)
   
   // 🎯 ПРЯМАЯ ПРОВЕРКА API
-  console.log('🎯 Testing API endpoint...')
-  try {
-    const response = await fetch(`/api/seka/games/${props.gameId}/state`)
-    console.log('🎯 API Response status:', response.status)
-    console.log('🎯 API Response ok:', response.ok)
+  console.log('🎯 Loading game state for ID:', props.gameId)
+  // try {
+  //   const response = await fetch(`/api/seka/games/${props.gameId}/state`)
+  //   console.log('🎯 API Response status:', response.status)
+  //   console.log('🎯 API Response ok:', response.ok)
     
-    if (response.ok) {
-      const data = await response.json()
-      console.log('🎯 API Response data:', data)
-    } else {
-      console.error('🎯 API Error:', response.status, response.statusText)
-    }
-  } catch (error) {
-    console.error('🎯 API Fetch error:', error)
-  }
+  //   if (response.ok) {
+  //     const data = await response.json()
+  //     console.log('🎯 API Response data:', data)
+  //   } else {
+  //     console.error('🎯 API Error:', response.status, response.statusText)
+  //   }
+  // } catch (error) {
+  //   console.error('🎯 API Fetch error:', error)
+  // }
   
   // 🎯 Затем загружаем через composable
-  loadGameState()
+  // loadGameState()
+
+  await loadGameState()
+
+  // 🎯 ДИАГНОСТИКА
+  console.log('🎯 Game State Structure:', backendGameState.value)
+  console.log('🎯 Players:', players.value)
+  console.log('🎯 Current Player:', currentPlayer.value)
+  console.log('🎯 Authenticated User:', authUser.value)
+  console.log('🎯 Game ID:', props.gameId)
+  loadTableData()
 })
 
 onUnmounted(() => {
@@ -488,29 +890,155 @@ watch(error, (newError) => {
   }
 })
 
-watch(lastError, (newError) => {
-  if (newError) {
-    console.error('❌ Action error:', newError)
+// 🎯 ОБРАБОТКА ОШИБОК И УСПЕХА ДЕЙСТВИЙ
+watch(lastError, (error) => {
+  if (error) {
+    console.error('❌ Action error detected:', error)
     // Можно показать уведомление пользователю
+    setTimeout(() => clearError(), 3000) // Автоочистка через 3 сек
   }
 })
 
-// В SekaGame.vue, после computed players
+watch(lastSuccess, (success) => {
+  if (success) {
+    console.log('✅ Action success detected:', success)
+    // Можно показать уведомление об успехе
+    setTimeout(() => clearSuccess(), 2000) // Автоочистка через 2 сек
+  }
+})
+
+// 🎯 ГЛУБОКАЯ ДИАГНОСТИКА ИГРОКОВ
 watch(players, (newPlayers) => {
-  console.log('🎯 DEBUG Fixed Players data:', newPlayers)
-  console.log('🎯 DEBUG Game structure:', backendGameState.value?.game)
-}, { immediate: true })
+  console.log('🔍 [SekaGame] Players POSITIONS:')
+  newPlayers.forEach(player => {
+    console.log(`  Player ${player.id} (${player.name}): position ${player.position}`)
+  })
+}, { deep: true, immediate: true })
+
+// 🎯 ДИАГНОСТИКА ВСЕХ COMPUTED
+watch([pot, currentRound, currentPlayerId, dealerId, currentMaxBet], 
+  ([newPot, newRound, newPlayerId, newDealerId, newMaxBet]) => {
+    console.log('📊 ALL COMPUTED UPDATED:', {
+      pot: newPot,
+      round: newRound,
+      playerId: newPlayerId,
+      dealerId: newDealerId,
+      maxBet: newMaxBet
+    })
+  }, { immediate: true }
+)
 
 // Временная глубокая диагностика
 watch(backendGameState, (newState) => {
-  console.log('🎯 DEEP DEBUG Full backend state:', JSON.parse(JSON.stringify(newState)))
-  console.log('🎯 DEEP DEBUG Game object:', newState?.game)
-  console.log('🎯 DEEP DEBUG Players in game:', newState?.game?.players)
-}, { immediate: true, deep: true })
+  if (newState?.players_list) {
+    console.log('🔍 [SekaGame] Backend players data:', newState.players_list)
+    newState.players_list.forEach(player => {
+      console.log('  Player from backend:', {
+        id: player.id,
+        name: player.name,
+        authUserId: authUser.value?.id,
+        isCurrentUser: player.id === authUser.value?.id
+      })
+    })
+  }
+}, { deep: true })
+
+// 🎯 ДИАГНОСТИКА БАЗОВОЙ СТАВКИ
+watch(baseBet, (newBet) => {
+  console.log('💰 Base bet calculated:', {
+    tableData: tableData.value?.base_bet,
+    backendData: backendGameState.value?.base_bet,
+    finalBet: newBet
+  })
+})
+
+// 🎯 ПЕРЕДАЕМ ПРОПСЫ В КОМПОНЕНТЫ
+const gameTableProps = computed(() => ({
+  players: players.value,
+  playerCards: playerCards.value,
+  currentPlayerId: currentPlayerId.value,
+  bank: pot.value,
+  currentRound: currentRound.value,
+  gameStatus: gameStatus.value,
+  dealerId: dealerId.value,
+  isMobile: isMobile.value,
+  isActionLoading: isActionLoading.value // 🎯 ПЕРЕДАЕМ СОСТОЯНИЕ ЗАГРУЗКИ
+}))
 
 </script>
 
 <style scoped>
+
+/* SekaGame.vue - СТИЛИ ДЛЯ ПАНЕЛИ ОЖИДАНИЯ */
+.waiting-info-panel {
+  background: rgba(0, 0, 0, 0.8);
+  border: 2px solid #3b82f6;
+  border-radius: 10px;
+  padding: 12px;
+  margin: 10px auto;
+  max-width: 600px;
+}
+
+.waiting-stats {
+  display: flex;
+  justify-content: space-around;
+  flex-wrap: wrap;
+  gap: 15px;
+}
+
+.waiting-stats .stat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.waiting-stats .stat-item .label {
+  font-size: 0.8rem;
+  color: #9ca3af;
+}
+
+.waiting-stats .stat-item .value {
+  font-size: 1rem;
+  font-weight: bold;
+  color: #3b82f6;
+}
+
+.waiting-overlay,
+.waiting-ready-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.waiting-panel,
+.waiting-ready-panel {
+  background: linear-gradient(135deg, #1a5a1a 0%, #0a2f0a 100%);
+  padding: 2rem;
+  border-radius: 15px;
+  border: 2px solid #fbbf24;
+  color: white;
+  text-align: center;
+  max-width: 400px;
+}
+
+.waiting-spinner {
+  font-size: 3rem;
+  animation: spin 2s linear infinite;
+  margin-top: 1rem;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
 .seka-game {
   position: relative;
   min-height: 100vh;
@@ -925,6 +1453,60 @@ watch(backendGameState, (newState) => {
   font-size: 0.9rem;
   opacity: 0.8;
   margin-top: 1rem;
+}
+
+
+/* 🎯 СТИЛИ ДЛЯ ТАЙМЕРОВ */
+.timer-badge {
+  margin-left: 8px;
+  padding: 2px 6px;
+  background: rgba(59, 130, 246, 0.2);
+  border: 1px solid #3b82f6;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: bold;
+  color: #3b82f6;
+}
+
+.timer-badge.critical {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: #ef4444;
+  color: #ef4444;
+  animation: pulse 1s infinite;
+}
+
+/* В стили SekaGame.vue */
+.game-actions-header {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  z-index: 100;
+}
+
+.leave-game-btn {
+  background: rgba(220, 38, 38, 0.8);
+  color: white;
+  border: 1px solid rgba(220, 38, 38, 0.5);
+  padding: 10px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: all 0.3s ease;
+}
+
+.leave-game-btn:hover:not(:disabled) {
+  background: rgba(220, 38, 38, 1);
+  transform: translateY(-1px);
+}
+
+.leave-game-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
 @keyframes spin {
